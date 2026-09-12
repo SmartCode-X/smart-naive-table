@@ -45,7 +45,7 @@ npm i smart-naive-table
 
 ```vue
 <script setup lang="ts">
-import { ProTable, type ProTableColumn, type ProTableFetcher } from 'smart-naive-table'
+import { SmartTable, type SmartTableColumn, type SmartTableFetcher } from 'smart-naive-table'
 
 interface User {
   id: number
@@ -56,7 +56,7 @@ interface User {
 }
 
 // ① 定义列：search 生成搜索项；options + tag 把状态值翻译成彩色标签
-const columns: ProTableColumn<User>[] = [
+const columns: SmartTableColumn<User>[] = [
   { type: 'index' },
   { key: 'account', title: '账号', search: true },
   { key: 'name', title: '姓名', search: true },
@@ -74,7 +74,7 @@ const columns: ProTableColumn<User>[] = [
 ]
 
 // ② 对接后端：把接口返回值转换成 { items, total }
-const fetcher: ProTableFetcher<User> = async ({ page, pageSize, ...query }) => {
+const fetcher: SmartTableFetcher<User> = async ({ page, pageSize, ...query }) => {
   const res = await getUserPage({ current: page, size: pageSize, ...query }) // 换成你的接口
   return { items: res.records, total: res.total }
 }
@@ -82,7 +82,7 @@ const fetcher: ProTableFetcher<User> = async ({ page, pageSize, ...query }) => {
 
 <template>
   <!-- ③ 渲染；storage-key 用来记住用户的列设置 -->
-  <ProTable :columns="columns" :fetcher="fetcher" storage-key="user-list" />
+  <SmartTable :columns="columns" :fetcher="fetcher" storage-key="user-list" />
 </template>
 ```
 
@@ -98,7 +98,7 @@ const fetcher: ProTableFetcher<User> = async ({ page, pageSize, ...query }) => {
 { page: 1, pageSize: 10, account: 'user01', status: 1 }
 ```
 
-> **提示**：把 ProTable 放在 `<n-config-provider>` 内，主题和语言都跟随它。组件自带文案默认是英文，中文项目请看 [全局配置与中文文案](#全局配置与中文文案)。上图的完整代码见 [playground/DemoBasic.vue](./playground/DemoBasic.vue)。
+> **提示**：把 SmartTable 放在 `<n-config-provider>` 内，主题和语言都跟随它。组件自带文案默认是英文，中文项目请看 [全局配置与中文文案](#全局配置与中文文案)。上图的完整代码见 [playground/DemoBasic.vue](./playground/DemoBasic.vue)。
 
 ## 常用写法
 
@@ -119,17 +119,17 @@ const fetcher: ProTableFetcher<User> = async ({ page, pageSize, ...query }) => {
 搜索区布局：
 
 ```vue
-<ProTable :search="{ collapsible: true, collapsedRows: 1 }" /> <!-- 超过 1 行时折叠，带展开 / 收起 -->
-<ProTable :search="{ layout: 'inline' }" />                    <!-- 无卡片、单行排列，适合窄栏 -->
-<ProTable :search="false" />                                   <!-- 不显示搜索区 -->
+<SmartTable :search="{ collapsible: true, collapsedRows: 1 }" /> <!-- 超过 1 行时折叠，带展开 / 收起 -->
+<SmartTable :search="{ layout: 'inline' }" />                    <!-- 无卡片、单行排列，适合窄栏 -->
+<SmartTable :search="false" />                                   <!-- 不显示搜索区 -->
 ```
 
 ### 字典、标签与格式化
 
 ```ts
-import type { ProTableOption } from 'smart-naive-table'
+import type { SmartTableOption } from 'smart-naive-table'
 
-const statusOptions: ProTableOption[] = [
+const statusOptions: SmartTableOption[] = [
   { label: '在职', value: 1, tagType: 'success' },
   { label: '休假', value: 2, tagType: 'warning' },
   { label: '离职', value: 3, tagType: 'error' },
@@ -163,11 +163,11 @@ import { NButton } from 'naive-ui'
 不想写 `render` 函数，也可以用插槽：
 
 ```vue
-<ProTable :columns="columns" :fetcher="fetcher">
+<SmartTable :columns="columns" :fetcher="fetcher">
   <template #cell-name="{ row }">
     <a @click="open(row)">{{ row.name }}</a>
   </template>
-</ProTable>
+</SmartTable>
 ```
 
 单元格渲染优先级：`render` → `#cell-{key}` 插槽 → `options` 翻译 → `format` → 原始值。
@@ -197,16 +197,16 @@ import { NButton } from 'naive-ui'
 | 列宽拖拽 | 列上写 `resizable: true` |
 | 虚拟滚动 | `virtual-scroll` + `max-height` |
 | 合计行 | `:summary="(pageData) => ..."` |
-| 其它表格属性 | 直接写在 ProTable 上，原样传给 `n-data-table`（如 `striped`、`bordered`） |
+| 其它表格属性 | 直接写在 SmartTable 上，原样传给 `n-data-table`（如 `striped`、`bordered`） |
 
 ### 调用表格方法
 
 ```vue
 <script setup lang="ts">
 import { ref } from 'vue'
-import type { ProTableInst } from 'smart-naive-table'
+import type { SmartTableInst } from 'smart-naive-table'
 
-const tableRef = ref<ProTableInst<User>>()
+const tableRef = ref<SmartTableInst<User>>()
 
 // 在需要的地方调用：
 // tableRef.value?.refresh()  保持当前页刷新（如编辑之后）
@@ -215,7 +215,7 @@ const tableRef = ref<ProTableInst<User>>()
 </script>
 
 <template>
-  <ProTable ref="tableRef" :columns="columns" :fetcher="fetcher" />
+  <SmartTable ref="tableRef" :columns="columns" :fetcher="fetcher" />
 </template>
 ```
 
@@ -256,14 +256,14 @@ const crud = useTableCrud({
 ```ts
 // main.ts
 import { createApp } from 'vue'
-import { PRO_TABLE_DEFAULTS, createProTableDefaults } from 'smart-naive-table'
+import { SMART_TABLE_DEFAULTS, createSmartTableDefaults } from 'smart-naive-table'
 import App from './App.vue'
 
 const app = createApp(App)
 
 app.provide(
-  PRO_TABLE_DEFAULTS,
-  createProTableDefaults({
+  SMART_TABLE_DEFAULTS,
+  createSmartTableDefaults({
     labels: {
       search: '查询',
       reset: '重置',
@@ -322,7 +322,7 @@ import { NConfigProvider, zhCN, dateZhCN } from 'naive-ui'
 | `hide` | `boolean` | 初始隐藏，可在列设置中勾回 |
 | `hideInTable` | `boolean` | 只作为搜索项，不显示成列 |
 | `hideInSetting` | `boolean` | 显示在表格中，但不出现在列设置里（常用于操作列） |
-| `children` | `ProTableDataColumn[]` | 多级表头 |
+| `children` | `SmartTableDataColumn[]` | 多级表头 |
 
 - **Option**：`{ label, value, tagType?, disabled?, children? }`，`tagType` 可选 `default` / `primary` / `info` / `success` / `warning` / `error`
 - **特殊列**：`{ type: 'index' }` 序号（跨页连续）、`{ type: 'selection' }` 多选、`{ type: 'expand', renderExpand }` 展开行
@@ -345,7 +345,7 @@ import { NConfigProvider, zhCN, dateZhCN } from 'naive-ui'
 
 | 属性 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `columns` | `ProTableColumn[]` | — | **必填**。列配置 |
+| `columns` | `SmartTableColumn[]` | — | **必填**。列配置 |
 | `fetcher` | `(params) => Promise<{ items, total }>` | — | 远程数据来源 |
 | `data` | `T[]` | — | 静态数据（前端分页），与 `fetcher` 二选一 |
 | `row-key` | `string \| (row) => key` | `'id'` | 行唯一标识 |
@@ -358,7 +358,7 @@ import { NConfigProvider, zhCN, dateZhCN } from 'naive-ui'
 | `title` | `string` | — | 表格标题，也可用 `#title` 插槽 |
 | `storage-key` | `string` | — | 设置后，列设置和密度保存到 localStorage |
 | `default-density` | `'comfortable' \| 'compact'` | `'comfortable'` | 默认密度 |
-| `labels` | `Partial<ProTableLabels>` | 英文 | 覆盖组件文案，传 `computed` 可随语言切换 |
+| `labels` | `Partial<SmartTableLabels>` | 英文 | 覆盖组件文案，传 `computed` 可随语言切换 |
 | `active-row-key` | `string \| number \| null` | — | 高亮对应的行 |
 | `row-draggable` | `boolean` | `false` | 开启行拖拽排序 |
 | `drag-handle` | `string` | — | 拖拽手柄的 CSS 选择器，不传则整行可拖 |
@@ -413,7 +413,7 @@ import { NConfigProvider, zhCN, dateZhCN } from 'naive-ui'
 
 ### 全局默认字段
 
-通过 `createProTableDefaults({...})` 设置，均为可选：
+通过 `createSmartTableDefaults({...})` 设置，均为可选：
 
 | 字段 | 内置默认 | 说明 |
 |---|---|---|
@@ -432,9 +432,9 @@ import { NConfigProvider, zhCN, dateZhCN } from 'naive-ui'
 
 ### 其它导出
 
-- `useProTable(fetcher, options)`：组件内部使用的数据核心（加载、分页、搜索、防竞态），不依赖 UI，可自己搭界面
+- `useSmartTable(fetcher, options)`：组件内部使用的数据核心（加载、分页、搜索、防竞态），不依赖 UI，可自己搭界面
 - `cleanParams`、`formatDate`、`formatDatetime`、`formatMoney`、`defaultLabels` 等工具函数
-- 全部类型：`ProTableColumn`、`ProTableFetcher`、`ProTableInst`、`ProTableOption`、`SearchConfig` 等
+- 全部类型：`SmartTableColumn`、`SmartTableFetcher`、`SmartTableInst`、`SmartTableOption`、`SearchConfig` 等
 
 ## 行为说明
 

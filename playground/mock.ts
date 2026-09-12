@@ -1,5 +1,5 @@
 import { reactive } from 'vue'
-import type { PageResult, ProTableParams } from '../src/index'
+import type { PageResult, SmartTableParams } from '../src/index'
 import { tt } from './locale'
 
 export interface DemoRow {
@@ -47,7 +47,7 @@ function delay(): Promise<void> {
 }
 
 /** mock 请求:延迟 300-800ms,支持过滤 + 分页切片;fail 开关下 reject。 */
-export async function mockPage(params: ProTableParams): Promise<PageResult<DemoRow>> {
+export async function mockPage(params: SmartTableParams): Promise<PageResult<DemoRow>> {
   await delay()
   if (mockState.fail) throw new Error('mock request failed (toggle on)')
 

@@ -1,9 +1,9 @@
 import { isRef, reactive, toValue, watchEffect, type MaybeRefOrGetter } from 'vue'
-import type { OptionsSource, ProTableOption } from './types'
+import type { OptionsSource, SmartTableOption } from './types'
 
 interface AsyncEntry {
   loading: boolean
-  options: ProTableOption[]
+  options: SmartTableOption[]
 }
 
 /**
@@ -16,7 +16,7 @@ export function useOptions(sources: MaybeRefOrGetter<Record<string, OptionsSourc
   const inflight = new Map<string, Promise<void>>()
   const triggered = new Set<string>()
 
-  function fire(key: string, fn: () => Promise<ProTableOption[]>): Promise<void> {
+  function fire(key: string, fn: () => Promise<SmartTableOption[]>): Promise<void> {
     const existing = inflight.get(key)
     if (existing) return existing
     if (!asyncState[key]) asyncState[key] = { loading: false, options: [] }
@@ -27,7 +27,7 @@ export function useOptions(sources: MaybeRefOrGetter<Record<string, OptionsSourc
       })
       .catch((e) => {
         asyncState[key].options = []
-        console.warn(`[pro-table] load options for "${key}" failed:`, e)
+        console.warn(`[smart-table] load options for "${key}" failed:`, e)
       })
       .finally(() => {
         asyncState[key].loading = false
@@ -48,7 +48,7 @@ export function useOptions(sources: MaybeRefOrGetter<Record<string, OptionsSourc
     }
   })
 
-  function getOptions(key: string): ProTableOption[] {
+  function getOptions(key: string): SmartTableOption[] {
     const src = toValue(sources)[key]
     if (!src) return []
     if (typeof src === 'function') return asyncState[key]?.options ?? []
@@ -78,7 +78,7 @@ export function useOptions(sources: MaybeRefOrGetter<Record<string, OptionsSourc
 }
 
 /** 按 value 在选项树中查找(单元格翻译用,扁平化递归)。 */
-export function findOption(options: ProTableOption[], value: unknown): ProTableOption | undefined {
+export function findOption(options: SmartTableOption[], value: unknown): SmartTableOption | undefined {
   for (const opt of options) {
     if (opt.value === value) return opt
     if (opt.children) {
@@ -90,6 +90,6 @@ export function findOption(options: ProTableOption[], value: unknown): ProTableO
 }
 
 /** 渲染期求值 label(函数形式支持语言切换)。 */
-export function optionLabel(opt: ProTableOption): string {
+export function optionLabel(opt: SmartTableOption): string {
   return typeof opt.label === 'function' ? opt.label() : opt.label
 }

@@ -2,12 +2,12 @@
 // CRUD demo:useTableCrud 弹窗状态机 + #toolbar 新增按钮 + 行内编辑/删除。
 import { h, ref } from 'vue'
 import { NButton, NForm, NFormItem, NInput, NModal, NPopconfirm, NSpace, NSwitch, useMessage } from 'naive-ui'
-import { ProTable, useTableCrud, type ProTableColumn, type ProTableInst } from '../src/index'
+import { SmartTable, useTableCrud, type SmartTableColumn, type SmartTableInst } from '../src/index'
 import { mockCreate, mockPage, mockRemove, mockUpdate, type DemoForm, type DemoRow } from './mock'
 import { labels, tt } from './locale'
 
 const message = useMessage()
-const tableRef = ref<ProTableInst<DemoRow>>()
+const tableRef = ref<SmartTableInst<DemoRow>>()
 
 const crud = useTableCrud<DemoRow, DemoForm>({
   form: () => ({ account: '', name: '', email: '', enabled: true }),
@@ -21,7 +21,7 @@ const crud = useTableCrud<DemoRow, DemoForm>({
   onError: (e) => message.error(String(e)),
 })
 
-const columns: ProTableColumn<DemoRow>[] = [
+const columns: SmartTableColumn<DemoRow>[] = [
   { type: 'index' },
   { key: 'account', title: tt('账号', 'Account'), search: true },
   { key: 'name', title: tt('姓名', 'Name'), search: true },
@@ -52,7 +52,7 @@ const columns: ProTableColumn<DemoRow>[] = [
 </script>
 
 <template>
-  <ProTable
+  <SmartTable
     ref="tableRef"
     :columns="columns"
     :fetcher="mockPage"
@@ -66,7 +66,7 @@ const columns: ProTableColumn<DemoRow>[] = [
     <template #cell-email="{ row }">
       <a :href="`mailto:${row.email}`">{{ row.email }}</a>
     </template>
-  </ProTable>
+  </SmartTable>
 
   <n-modal
     v-model:show="crud.visible.value"

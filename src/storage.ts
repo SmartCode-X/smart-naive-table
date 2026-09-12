@@ -7,6 +7,7 @@ export interface DeclaredCol {
   fixed?: 'left' | 'right'
 }
 
+// 存储键前缀是持久化格式:改动会丢掉用户已存的列设置。
 const PREFIX = 'protable:'
 
 export function loadState(storageKey: string): StoredTableState | null {

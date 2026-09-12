@@ -1,7 +1,7 @@
 {
   "name": "smart-naive-table",
-  "version": "1.0.0",
-  "description": "Columns-driven pro table for Vue 3 + Naive UI: auto search form, remote pagination adapter, dict cell rendering, persistent column settings, density toggle, i18n via labels.",
+  "version": "2.0.0",
+  "description": "Columns-driven data table for Vue 3 + Naive UI: auto search form, remote pagination adapter, dict cell rendering, persistent column settings, density toggle, i18n via labels.",
   "type": "module",
   "license": "Apache-2.0",
   "author": "HuGuoDong",
@@ -22,7 +22,7 @@
     "naive-ui",
     "table",
     "data-table",
-    "pro-table",
+    "smart-table",
     "admin",
     "crud"
   ],

@@ -2,7 +2,7 @@
 // 主 demo:列驱动搜索表单、远程分页、字典/tag/格式化渲染、工具栏、列设置持久化。
 import { h } from 'vue'
 import { NButton, useMessage } from 'naive-ui'
-import { ProTable, type ProTableColumn } from '../src/index'
+import { SmartTable, type SmartTableColumn } from '../src/index'
 import { fetchDeptOptions, mockPage, type DemoRow } from './mock'
 import { labels, tt } from './locale'
 
@@ -19,7 +19,7 @@ const enabledOptions = [
   { label: tt('禁用', 'Disabled'), value: false, tagType: 'default' as const },
 ]
 
-const columns: ProTableColumn<DemoRow>[] = [
+const columns: SmartTableColumn<DemoRow>[] = [
   { type: 'index', fixed: 'left' },
   { key: 'account', title: tt('账号', 'Account'), width: 120, search: true },
   { key: 'name', title: tt('姓名', 'Name'), width: 110, search: true },
@@ -52,7 +52,7 @@ const columns: ProTableColumn<DemoRow>[] = [
 </script>
 
 <template>
-  <ProTable
+  <SmartTable
     :columns="columns"
     :fetcher="mockPage"
     :title="tt('人员列表', 'Staff')()"

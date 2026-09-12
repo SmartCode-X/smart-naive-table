@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { useProTable } from '../src/useProTable'
+import { useSmartTable } from '../src/useSmartTable'
 import type { PageResult } from '../src/types'
 
 interface Row {
@@ -18,12 +18,12 @@ function deferred<T>() {
 
 const page = (ids: number[], total = 100): PageResult<Row> => ({ items: ids.map((id) => ({ id })), total })
 
-describe('useProTable', () => {
+describe('useSmartTable', () => {
   it('race guard: out-of-order stale response is discarded', async () => {
     const d1 = deferred<PageResult<Row>>()
     const d2 = deferred<PageResult<Row>>()
     const queue = [d1, d2]
-    const table = useProTable<Row>(() => queue.shift()!.promise, { immediate: false })
+    const table = useSmartTable<Row>(() => queue.shift()!.promise, { immediate: false })
 
     const p1 = table.load()
     const p2 = table.load()
@@ -42,7 +42,7 @@ describe('useProTable', () => {
     const d2 = deferred<PageResult<Row>>()
     const queue = [d1, d2]
     const onError = vi.fn()
-    const table = useProTable<Row>(() => queue.shift()!.promise, { immediate: false, onError })
+    const table = useSmartTable<Row>(() => queue.shift()!.promise, { immediate: false, onError })
 
     const p1 = table.load()
     const p2 = table.load()
@@ -57,7 +57,7 @@ describe('useProTable', () => {
 
   it('search resets to page 1; pageSize change resets page and reloads', async () => {
     const calls: Array<Record<string, any>> = []
-    const table = useProTable<Row>(
+    const table = useSmartTable<Row>(
       async (p) => {
         calls.push(p)
         return page([1])
@@ -80,7 +80,7 @@ describe('useProTable', () => {
 
   it('sends cleaned search params plus extraParams, and stores total', async () => {
     const calls: Array<Record<string, any>> = []
-    const table = useProTable<Row>(
+    const table = useSmartTable<Row>(
       async (p) => {
         calls.push(p)
         return page([1], 42)
@@ -95,7 +95,7 @@ describe('useProTable', () => {
 
   it('failure calls onError and ends loading', async () => {
     const onError = vi.fn()
-    const table = useProTable<Row>(async () => Promise.reject(new Error('boom')), { immediate: false, onError })
+    const table = useSmartTable<Row>(async () => Promise.reject(new Error('boom')), { immediate: false, onError })
 
     await table.load()
     expect(onError).toHaveBeenCalledOnce()
@@ -103,7 +103,7 @@ describe('useProTable', () => {
   })
 
   it('reset restores initParams, nulls extra keys (never deletes), and goes to page 1', async () => {
-    const table = useProTable<Row>(async () => page([1]), {
+    const table = useSmartTable<Row>(async () => page([1]), {
       immediate: false,
       initParams: { name: 'a' },
     })
@@ -121,7 +121,7 @@ describe('useProTable', () => {
 
   it('immediate defaults to true', async () => {
     const fetcher = vi.fn(async () => page([1]))
-    useProTable<Row>(fetcher)
+    useSmartTable<Row>(fetcher)
     await Promise.resolve()
     expect(fetcher).toHaveBeenCalledOnce()
   })

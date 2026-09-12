@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cleanParams } from '../src/useProTable'
+import { cleanParams } from '../src/useSmartTable'
 
 describe('cleanParams', () => {
   it('drops undefined / null / empty string / empty array', () => {

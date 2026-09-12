@@ -45,7 +45,7 @@ Requires `vue >= 3.3` and `naive-ui >= 2.34` in your project.
 
 ```vue
 <script setup lang="ts">
-import { ProTable, type ProTableColumn, type ProTableFetcher } from 'smart-naive-table'
+import { SmartTable, type SmartTableColumn, type SmartTableFetcher } from 'smart-naive-table'
 
 interface User {
   id: number
@@ -56,7 +56,7 @@ interface User {
 }
 
 // ① Columns: `search` creates a search field; `options` + `tag` turn status values into colored tags
-const columns: ProTableColumn<User>[] = [
+const columns: SmartTableColumn<User>[] = [
   { type: 'index' },
   { key: 'account', title: 'Account', search: true },
   { key: 'name', title: 'Name', search: true },
@@ -74,7 +74,7 @@ const columns: ProTableColumn<User>[] = [
 ]
 
 // ② Backend: map your API response to { items, total }
-const fetcher: ProTableFetcher<User> = async ({ page, pageSize, ...query }) => {
+const fetcher: SmartTableFetcher<User> = async ({ page, pageSize, ...query }) => {
   const res = await getUserPage({ current: page, size: pageSize, ...query }) // your API here
   return { items: res.records, total: res.total }
 }
@@ -82,7 +82,7 @@ const fetcher: ProTableFetcher<User> = async ({ page, pageSize, ...query }) => {
 
 <template>
   <!-- ③ Render; storage-key remembers the user's column settings -->
-  <ProTable :columns="columns" :fetcher="fetcher" storage-key="user-list" />
+  <SmartTable :columns="columns" :fetcher="fetcher" storage-key="user-list" />
 </template>
 ```
 
@@ -98,7 +98,7 @@ When you click Search, `fetcher` receives (empty values already stripped):
 { page: 1, pageSize: 10, account: 'user01', status: 1 }
 ```
 
-> **Tip**: render ProTable inside `<n-config-provider>` — theme and locale follow it. The full code behind the screenshot is in [playground/DemoBasic.vue](./playground/DemoBasic.vue).
+> **Tip**: render SmartTable inside `<n-config-provider>` — theme and locale follow it. The full code behind the screenshot is in [playground/DemoBasic.vue](./playground/DemoBasic.vue).
 
 ## Recipes
 
@@ -119,17 +119,17 @@ Control types: `input` (default), `number`, `select`, `date`, `daterange`, `swit
 Search area layout:
 
 ```vue
-<ProTable :search="{ collapsible: true, collapsedRows: 1 }" /> <!-- collapse beyond 1 row, with expand / collapse -->
-<ProTable :search="{ layout: 'inline' }" />                    <!-- no card, single wrapping row for narrow panes -->
-<ProTable :search="false" />                                   <!-- no search area -->
+<SmartTable :search="{ collapsible: true, collapsedRows: 1 }" /> <!-- collapse beyond 1 row, with expand / collapse -->
+<SmartTable :search="{ layout: 'inline' }" />                    <!-- no card, single wrapping row for narrow panes -->
+<SmartTable :search="false" />                                   <!-- no search area -->
 ```
 
 ### Dicts, tags and formats
 
 ```ts
-import type { ProTableOption } from 'smart-naive-table'
+import type { SmartTableOption } from 'smart-naive-table'
 
-const statusOptions: ProTableOption[] = [
+const statusOptions: SmartTableOption[] = [
   { label: 'Active', value: 1, tagType: 'success' },
   { label: 'On leave', value: 2, tagType: 'warning' },
   { label: 'Resigned', value: 3, tagType: 'error' },
@@ -163,11 +163,11 @@ import { NButton } from 'naive-ui'
 Or use a slot instead of a `render` function:
 
 ```vue
-<ProTable :columns="columns" :fetcher="fetcher">
+<SmartTable :columns="columns" :fetcher="fetcher">
   <template #cell-name="{ row }">
     <a @click="open(row)">{{ row.name }}</a>
   </template>
-</ProTable>
+</SmartTable>
 ```
 
 Cell priority: `render` → `#cell-{key}` slot → `options` translation → `format` → raw value.
@@ -197,16 +197,16 @@ Open it from the rightmost toolbar icon: toggle visibility, drag to reorder, pin
 | Column resize | `resizable: true` on a column |
 | Virtual scroll | `virtual-scroll` + `max-height` |
 | Summary row | `:summary="(pageData) => ..."` |
-| Other table props | put them on ProTable; they are forwarded to `n-data-table` (e.g. `striped`, `bordered`) |
+| Other table props | put them on SmartTable; they are forwarded to `n-data-table` (e.g. `striped`, `bordered`) |
 
 ### Calling table methods
 
 ```vue
 <script setup lang="ts">
 import { ref } from 'vue'
-import type { ProTableInst } from 'smart-naive-table'
+import type { SmartTableInst } from 'smart-naive-table'
 
-const tableRef = ref<ProTableInst<User>>()
+const tableRef = ref<SmartTableInst<User>>()
 
 // Call wherever needed:
 // tableRef.value?.refresh()  reload the current page (e.g. after editing)
@@ -215,7 +215,7 @@ const tableRef = ref<ProTableInst<User>>()
 </script>
 
 <template>
-  <ProTable ref="tableRef" :columns="columns" :fetcher="fetcher" />
+  <SmartTable ref="tableRef" :columns="columns" :fetcher="fetcher" />
 </template>
 ```
 
@@ -256,15 +256,15 @@ On success `crud.submit()` closes the dialog and calls `onSuccess`. Full example
 ```ts
 // main.ts
 import { computed, createApp } from 'vue'
-import { PRO_TABLE_DEFAULTS, createProTableDefaults } from 'smart-naive-table'
+import { SMART_TABLE_DEFAULTS, createSmartTableDefaults } from 'smart-naive-table'
 import App from './App.vue'
 
 const app = createApp(App)
 const t = i18n.global.t // your i18n function, e.g. vue-i18n
 
 app.provide(
-  PRO_TABLE_DEFAULTS,
-  createProTableDefaults({
+  SMART_TABLE_DEFAULTS,
+  createSmartTableDefaults({
     align: 'left',
     pageSizes: [10, 20, 50, 100],
     emptyText: '-',
@@ -300,7 +300,7 @@ Data columns accept every Naive UI column prop (`width`, `minWidth`, `fixed`, `a
 | `hide` | `boolean` | Initially hidden; can be re-enabled in column settings |
 | `hideInTable` | `boolean` | Search-only field, never rendered as a column |
 | `hideInSetting` | `boolean` | Rendered, but not listed in column settings (typical: actions) |
-| `children` | `ProTableDataColumn[]` | Multi-level headers |
+| `children` | `SmartTableDataColumn[]` | Multi-level headers |
 
 - **Option**: `{ label, value, tagType?, disabled?, children? }`; `tagType` is one of `default` / `primary` / `info` / `success` / `warning` / `error`
 - **Special columns**: `{ type: 'index' }` row number (continues across pages), `{ type: 'selection' }` checkbox, `{ type: 'expand', renderExpand }` expandable row
@@ -323,7 +323,7 @@ Data columns accept every Naive UI column prop (`width`, `minWidth`, `fixed`, `a
 
 | Prop | Type | Default | Description |
 |---|---|---|---|
-| `columns` | `ProTableColumn[]` | — | **Required**. Column definitions |
+| `columns` | `SmartTableColumn[]` | — | **Required**. Column definitions |
 | `fetcher` | `(params) => Promise<{ items, total }>` | — | Remote data source |
 | `data` | `T[]` | — | Static data (client-side pagination); use instead of `fetcher` |
 | `row-key` | `string \| (row) => key` | `'id'` | Row identity |
@@ -336,7 +336,7 @@ Data columns accept every Naive UI column prop (`width`, `minWidth`, `fixed`, `a
 | `title` | `string` | — | Table title, or use the `#title` slot |
 | `storage-key` | `string` | — | Persist column settings and density to localStorage |
 | `default-density` | `'comfortable' \| 'compact'` | `'comfortable'` | Initial density |
-| `labels` | `Partial<ProTableLabels>` | English | Override component text; pass a `computed` for locale switching |
+| `labels` | `Partial<SmartTableLabels>` | English | Override component text; pass a `computed` for locale switching |
 | `active-row-key` | `string \| number \| null` | — | Highlight the matching row |
 | `row-draggable` | `boolean` | `false` | Enable row drag-to-reorder |
 | `drag-handle` | `string` | — | CSS selector for the drag handle; whole row if omitted |
@@ -391,7 +391,7 @@ Anything not listed (e.g. `striped`, `max-height`, `checked-row-keys`, `virtual-
 
 ### Global default fields
 
-Set via `createProTableDefaults({...})`; all optional:
+Set via `createSmartTableDefaults({...})`; all optional:
 
 | Field | Built-in | Description |
 |---|---|---|
@@ -410,9 +410,9 @@ Set via `createProTableDefaults({...})`; all optional:
 
 ### Other exports
 
-- `useProTable(fetcher, options)`: the UI-agnostic data core the component uses (loading, pagination, search, race guard) — build your own UI on it
+- `useSmartTable(fetcher, options)`: the UI-agnostic data core the component uses (loading, pagination, search, race guard) — build your own UI on it
 - Helpers: `cleanParams`, `formatDate`, `formatDatetime`, `formatMoney`, `defaultLabels`, ...
-- All types: `ProTableColumn`, `ProTableFetcher`, `ProTableInst`, `ProTableOption`, `SearchConfig`, ...
+- All types: `SmartTableColumn`, `SmartTableFetcher`, `SmartTableInst`, `SmartTableOption`, `SearchConfig`, ...
 
 ## Behavior notes
 

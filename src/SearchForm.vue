@@ -18,7 +18,7 @@ import {
   NSwitch,
 } from 'naive-ui'
 import type { SelectMixedOption } from 'naive-ui/es/select/src/interface'
-import type { ProTableLabels, ProTableOption, SearchFormConfig } from './types'
+import type { SmartTableLabels, SmartTableOption, SearchFormConfig } from './types'
 import type { SearchDef } from './useColumns'
 import { optionLabel } from './useOptions'
 
@@ -26,10 +26,10 @@ const props = defineProps({
   fields: { type: Array as PropType<SearchDef[]>, required: true },
   params: { type: Object as PropType<Record<string, any>>, required: true },
   config: { type: Object as PropType<SearchFormConfig>, default: () => ({}) },
-  labels: { type: Object as PropType<ProTableLabels>, required: true },
+  labels: { type: Object as PropType<SmartTableLabels>, required: true },
   loading: { type: Boolean, default: false },
   dateValueFormat: { type: String, default: 'yyyy-MM-dd' },
-  getOptions: { type: Function as PropType<(key: string) => ProTableOption[]>, required: true },
+  getOptions: { type: Function as PropType<(key: string) => SmartTableOption[]>, required: true },
   isLoadingOptions: { type: Function as PropType<(key: string) => boolean>, required: true },
 })
 
@@ -52,7 +52,7 @@ function resolveLabel(label: SearchDef['label']): string | undefined {
   return label
 }
 
-function toSelectOptions(opts: ProTableOption[]): SelectMixedOption[] {
+function toSelectOptions(opts: SmartTableOption[]): SelectMixedOption[] {
   return opts.map((o) =>
     o.children?.length
       ? { type: 'group' as const, label: optionLabel(o), key: String(o.value), children: toSelectOptions(o.children) }
@@ -120,16 +120,16 @@ function renderField(f: SearchDef): VNodeChild {
   <!-- inline:无卡片,单行自动换行,塞进窄栏 -->
   <n-form
     v-if="isInline"
-    class="pro-table-search-inline"
+    class="smart-table-search-inline"
     :show-feedback="false"
     :label-placement="config.labelPlacement ?? 'left'"
     :label-width="config.labelWidth"
   >
-    <div class="pro-table-search-inline-row">
+    <div class="smart-table-search-inline-row">
       <n-form-item
         v-for="f in fields"
         :key="f.key"
-        class="pro-table-search-inline-item"
+        class="smart-table-search-inline-item"
         :label="resolveLabel(f.label)"
       >
         <component :is="() => renderField(f)" />
@@ -142,7 +142,7 @@ function renderField(f: SearchDef): VNodeChild {
   </n-form>
 
   <!-- grid(默认):独立卡片 + n-grid -->
-  <n-card v-else :bordered="true" class="pro-table-search">
+  <n-card v-else :bordered="true" class="smart-table-search">
     <n-form
       :show-feedback="false"
       :label-placement="config.labelPlacement ?? 'left'"
@@ -174,13 +174,13 @@ function renderField(f: SearchDef): VNodeChild {
 </template>
 
 <style scoped>
-.pro-table-search-inline-row {
+.smart-table-search-inline-row {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 12px 16px;
 }
-.pro-table-search-inline-item {
+.smart-table-search-inline-item {
   flex: 0 1 auto;
 }
 </style>

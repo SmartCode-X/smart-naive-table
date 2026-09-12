@@ -1,6 +1,6 @@
 import type { Ref, VNodeChild, MaybeRefOrGetter } from 'vue'
 import type { DataTableBaseColumn, DataTableInst, PaginationProps } from 'naive-ui'
-// naive-ui 只出现在类型位置;运行时 hooks(useProTable/useTableCrud/useOptions)不 import 它。
+// naive-ui 只出现在类型位置;运行时 hooks(useSmartTable/useTableCrud/useOptions)不 import 它。
 
 /* ======================== 数据契约 ======================== */
 
@@ -15,16 +15,16 @@ export interface PageResult<T> {
  * 值类型用 any 而非 unknown —— strict 下 unknown 会让窄签名的 api 函数
  * (如 `(p: {page:number; account?:string}) => ...`)因参数逆变无法直接赋给 fetcher。
  */
-export type ProTableParams = { page: number; pageSize: number } & Record<string, any>
+export type SmartTableParams = { page: number; pageSize: number } & Record<string, any>
 
 /** 请求适配器 —— 包的唯一后端契约,入/出参不同就在这一层映射。 */
-export type ProTableFetcher<T> = (params: ProTableParams) => Promise<PageResult<T>>
+export type SmartTableFetcher<T> = (params: SmartTableParams) => Promise<PageResult<T>>
 
 /* ======================== 字典 / 选项 ======================== */
 
 export type TagType = 'default' | 'primary' | 'info' | 'success' | 'warning' | 'error'
 
-export interface ProTableOption {
+export interface SmartTableOption {
   /** 函数形式在渲染期求值 —— 宿主 () => t('...') 切换语言即时生效。 */
   label: string | (() => string)
   value: string | number | boolean | null
@@ -33,14 +33,14 @@ export interface ProTableOption {
   /** 仅影响搜索 select,不影响单元格翻译。 */
   disabled?: boolean
   /** 树形选项(透传搜索控件;单元格翻译按扁平化查找)。 */
-  children?: ProTableOption[]
+  children?: SmartTableOption[]
 }
 
 /** 选项来源:静态数组 / 响应式 ref / 异步函数(内置 loading 与在途去重)。 */
 export type OptionsSource =
-  | ProTableOption[]
-  | Ref<ProTableOption[]>
-  | (() => Promise<ProTableOption[]>)
+  | SmartTableOption[]
+  | Ref<SmartTableOption[]>
+  | (() => Promise<SmartTableOption[]>)
 
 /* ======================== 声明式格式化 ======================== */
 
@@ -91,7 +91,7 @@ export interface SearchConfig {
  * 数据列。除 pro 字段外,其余 Naive 列属性(width/minWidth/fixed/align/
  * ellipsis/sorter...)原样透传给 n-data-table。
  */
-export interface ProTableDataColumn<T = any>
+export interface SmartTableDataColumn<T = any>
   extends Partial<Omit<DataTableBaseColumn<T>, 'key' | 'title' | 'render' | 'children'>> {
   /** 数据字段名;同时是搜索参数默认键、列设置持久化 id、动态插槽名。 */
   key: string
@@ -114,11 +114,11 @@ export interface ProTableDataColumn<T = any>
   /** 搜索项配置;true = 全默认(input / 有 options 则 select)。 */
   search?: boolean | SearchConfig
   /** 多级表头(Naive 原生名,子列同样支持 pro 字段)。 */
-  children?: ProTableDataColumn<T>[]
+  children?: SmartTableDataColumn<T>[]
 }
 
 /** 特殊列:勾选 / 展开 / 序号。显式 type,不进搜索/列设置/持久化。 */
-export interface ProTableSpecialColumn<T = any> {
+export interface SmartTableSpecialColumn<T = any> {
   type: 'selection' | 'expand' | 'index'
   width?: number
   fixed?: 'left' | 'right'
@@ -131,7 +131,7 @@ export interface ProTableSpecialColumn<T = any> {
 }
 
 /** 判别方式:有 type 字段即特殊列。 */
-export type ProTableColumn<T = any> = ProTableDataColumn<T> | ProTableSpecialColumn<T>
+export type SmartTableColumn<T = any> = SmartTableDataColumn<T> | SmartTableSpecialColumn<T>
 
 /* ======================== 组件 Props ======================== */
 
@@ -156,10 +156,10 @@ export interface ToolbarConfig {
   columnSettings?: boolean // 默认 true
 }
 
-export interface ProTableProps<T = any> {
-  columns: ProTableColumn<T>[]
+export interface SmartTableProps<T = any> {
+  columns: SmartTableColumn<T>[]
   /** 远程模式;与 data 二选一,同给时 fetcher 优先。 */
-  fetcher?: ProTableFetcher<T>
+  fetcher?: SmartTableFetcher<T>
   /** 静态模式:客户端分页,不发请求。 */
   data?: T[]
   /** 字段名或函数,默认 'id'。 */
@@ -181,14 +181,14 @@ export interface ProTableProps<T = any> {
   storageKey?: string
   defaultDensity?: Density // 默认 'comfortable'
   /** 部分覆盖英文默认文案;传 computed 对象即随 locale 响应。 */
-  labels?: Partial<ProTableLabels>
-  /** 命中行加 .pro-table-row--active 高亮(用 rowKey 比对);配合 @row-click 做主从选中。 */
+  labels?: Partial<SmartTableLabels>
+  /** 命中行加 .smart-table-row--active 高亮(用 rowKey 比对);配合 @row-click 做主从选中。 */
   activeRowKey?: string | number | null
 }
 
 /* ======================== 实例(模板 ref) ======================== */
 
-export interface ProTableInst<T = any> {
+export interface SmartTableInst<T = any> {
   /** 保持当前页与参数重查。 */
   refresh: () => Promise<void>
   /** 回第 1 页查询。 */
@@ -206,9 +206,9 @@ export interface ProTableInst<T = any> {
   tableRef: Ref<DataTableInst | null>
 }
 
-/* ======================== useProTable ======================== */
+/* ======================== useSmartTable ======================== */
 
-export interface UseProTableOptions {
+export interface UseSmartTableOptions {
   /** 搜索参数初值,也是 reset 的恢复目标。 */
   initParams?: Record<string, any>
   /** 每次请求追加的外部参数(getter/ref,请求时求值)。 */
@@ -218,7 +218,7 @@ export interface UseProTableOptions {
   onError?: (e: unknown) => void
 }
 
-export interface UseProTableReturn<T> {
+export interface UseSmartTableReturn<T> {
   loading: Ref<boolean>
   rows: Ref<T[]>
   /** reactive 搜索参数。 */
@@ -270,7 +270,7 @@ export interface UseTableCrudReturn<Row, Form> {
 /* ======================== 文案 ======================== */
 
 /** 组件自身 chrome 文案;列标题/选项 label 走函数形式,不在此列。 */
-export interface ProTableLabels {
+export interface SmartTableLabels {
   search: string
   reset: string
   refresh: string

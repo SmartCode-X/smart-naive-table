@@ -1,5 +1,5 @@
 import { reactive, ref, toValue, type Ref } from 'vue'
-import type { PageResult, ProTableFetcher, UseProTableOptions, UseProTableReturn } from './types'
+import type { PageResult, SmartTableFetcher, UseSmartTableOptions, UseSmartTableReturn } from './types'
 
 /**
  * 请求参数清洗(不改表单原值):字符串 trim,空串丢弃;丢弃 undefined/null/空数组;
@@ -25,7 +25,7 @@ export function cleanParams(params: Record<string, any>): Record<string, any> {
  * 列表页数据核(与 Naive 无关):loading / 数据 / 查询参数 / 分页 / 竞态守卫。
  * 消息提示留在宿主(onError),包内不弹任何 UI。
  */
-export function useProTable<T>(fetcher: ProTableFetcher<T>, opts?: UseProTableOptions): UseProTableReturn<T> {
+export function useSmartTable<T>(fetcher: SmartTableFetcher<T>, opts?: UseSmartTableOptions): UseSmartTableReturn<T> {
   const loading = ref(false)
   const rows = ref<T[]>([]) as Ref<T[]>
   const params = reactive<Record<string, any>>({ ...opts?.initParams })

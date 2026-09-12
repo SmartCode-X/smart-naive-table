@@ -2,14 +2,14 @@
 // 宽表 demo:selection + 20+ 列验证 auto scrollX、固定列宽度兜底、勾选透传。
 import { ref } from 'vue'
 import { useMessage } from 'naive-ui'
-import { ProTable, type ProTableColumn } from '../src/index'
+import { SmartTable, type SmartTableColumn } from '../src/index'
 import { mockPage, type DemoRow } from './mock'
 import { labels, tt } from './locale'
 
 const message = useMessage()
 const checked = ref<Array<string | number>>([])
 
-const columns: ProTableColumn<DemoRow>[] = [
+const columns: SmartTableColumn<DemoRow>[] = [
   { type: 'selection', fixed: 'left' },
   { key: 'account', title: tt('账号', 'Account'), width: 120, fixed: 'left' },
   { key: 'name', title: tt('姓名', 'Name'), width: 110 },
@@ -27,7 +27,7 @@ const columns: ProTableColumn<DemoRow>[] = [
 <template>
   <div>
     <p style="margin: 0 0 12px">checked: {{ checked.length }}</p>
-    <ProTable
+    <SmartTable
       :columns="columns"
       :fetcher="mockPage"
       :labels="labels"

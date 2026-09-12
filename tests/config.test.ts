@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { createApp, ref } from 'vue'
 import {
   BUILTIN_DEFAULTS,
-  PRO_TABLE_DEFAULTS,
+  SMART_TABLE_DEFAULTS,
   resolveDefaults,
-  useProTableDefaults,
+  useSmartTableDefaults,
 } from '../src/config'
 import { mergeLabels } from '../src/labels'
 
@@ -34,19 +34,19 @@ describe('resolveDefaults 优先级', () => {
   })
 })
 
-describe('useProTableDefaults 注入接线', () => {
+describe('useSmartTableDefaults 注入接线', () => {
   function withProvide<T>(provide: unknown, fn: () => T): T {
     const app = createApp({})
-    if (provide) app.provide(PRO_TABLE_DEFAULTS, provide as never)
+    if (provide) app.provide(SMART_TABLE_DEFAULTS, provide as never)
     return app.runWithContext(fn)
   }
 
   it('无 provide → 兜底', () => {
-    expect(withProvide(null, () => useProTableDefaults()).align).toBe('center')
+    expect(withProvide(null, () => useSmartTableDefaults()).align).toBe('center')
   })
 
   it('有 provide → 生效', () => {
-    const r = withProvide({ align: 'left' }, () => useProTableDefaults())
+    const r = withProvide({ align: 'left' }, () => useSmartTableDefaults())
     expect(r.align).toBe('left')
   })
 })

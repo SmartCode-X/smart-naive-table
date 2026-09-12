@@ -4,10 +4,10 @@ import type { DataTableBaseColumn, DataTableColumn } from 'naive-ui'
 import type {
   Density,
   OptionsSource,
-  ProTableColumn,
-  ProTableDataColumn,
-  ProTableOption,
-  ProTableSpecialColumn,
+  SmartTableColumn,
+  SmartTableDataColumn,
+  SmartTableOption,
+  SmartTableSpecialColumn,
   SearchConfig,
   SearchFieldType,
   SearchRenderCtx,
@@ -15,10 +15,10 @@ import type {
 import { applyFormat } from './format'
 import { findOption, optionLabel } from './useOptions'
 import { clearState, loadState, mergeCols, saveState, type DeclaredCol } from './storage'
-import type { ResolvedProTableDefaults } from './config'
+import type { ResolvedSmartTableDefaults } from './config'
 
-export function isSpecialColumn<T>(c: ProTableColumn<T>): c is ProTableSpecialColumn<T> {
-  return 'type' in c && typeof (c as ProTableSpecialColumn<T>).type === 'string'
+export function isSpecialColumn<T>(c: SmartTableColumn<T>): c is SmartTableSpecialColumn<T> {
+  return 'type' in c && typeof (c as SmartTableSpecialColumn<T>).type === 'string'
 }
 
 /* ======================== 搜索项派生 ======================== */
@@ -38,7 +38,7 @@ export interface SearchDef {
 }
 
 /** 从列定义派生搜索项:带 search 的数据列(含 hideInTable/hide 的)。 */
-export function deriveSearchDefs<T>(columns: ProTableColumn<T>[]): SearchDef[] {
+export function deriveSearchDefs<T>(columns: SmartTableColumn<T>[]): SearchDef[] {
   const defs: Array<SearchDef & { sortKey: number }> = []
   columns.forEach((col, idx) => {
     if (isSpecialColumn(col) || !col.search) return
@@ -68,7 +68,7 @@ export function deriveInitParams(defs: SearchDef[]): Record<string, any> {
 }
 
 /** 收集列上的字典源(列 key → OptionsSource)。 */
-export function deriveOptionsSources<T>(columns: ProTableColumn<T>[]): Record<string, OptionsSource> {
+export function deriveOptionsSources<T>(columns: SmartTableColumn<T>[]): Record<string, OptionsSource> {
   const out: Record<string, OptionsSource> = {}
   for (const col of columns) {
     if (!isSpecialColumn(col) && col.options) out[col.key] = col.options
@@ -86,15 +86,15 @@ export interface SettingItem {
 }
 
 export interface UseColumnsOpts<T> {
-  columns: () => ProTableColumn<T>[]
+  columns: () => SmartTableColumn<T>[]
   storageKey?: string
   defaultDensity: Density
-  getOptions: (key: string) => ProTableOption[]
+  getOptions: (key: string) => SmartTableOption[]
   slots: Slots
   /** index 特殊列的序号偏移(远程分页 = (page-1)*pageSize)。 */
   indexOffset: () => number
   /** 全局默认值(align/emptyText/tag/宽度兜底等),已含内置兜底。 */
-  defaults: ResolvedProTableDefaults
+  defaults: ResolvedSmartTableDefaults
   /** 当前受控排序态(sorter 列箭头回显);getter 保证 computed 内追踪。 */
   sortState?: () => { field: string; order: 'ascend' | 'descend' } | null
 }
@@ -119,7 +119,7 @@ export function useColumns<T>(opts: UseColumnsOpts<T>): UseColumnsReturn<T> {
   const density = ref<Density>(stored?.density ?? opts.defaultDensity)
 
   const dataCols = computed(() =>
-    opts.columns().filter((c): c is ProTableDataColumn<T> => !isSpecialColumn(c) && !c.hideInTable),
+    opts.columns().filter((c): c is SmartTableDataColumn<T> => !isSpecialColumn(c) && !c.hideInTable),
   )
   const specialCols = computed(() => opts.columns().filter(isSpecialColumn))
   const managedCols = computed(() => dataCols.value.filter((c) => !c.hideInSetting))
@@ -173,7 +173,7 @@ export function useColumns<T>(opts: UseColumnsOpts<T>): UseColumnsReturn<T> {
 
   /* ---- 数据列 → Naive 列 ---- */
 
-  function toNaive(col: ProTableDataColumn<T>, override?: { fixed?: 'left' | 'right' }): DataTableColumn<T> {
+  function toNaive(col: SmartTableDataColumn<T>, override?: { fixed?: 'left' | 'right' }): DataTableColumn<T> {
     const {
       key,
       title,
@@ -227,7 +227,7 @@ export function useColumns<T>(opts: UseColumnsOpts<T>): UseColumnsReturn<T> {
         const value = (row as Record<string, unknown>)[key]
         if (options) {
           if (value === null || value === undefined) return d.emptyText
-          const hit = findOption(opts.getOptions(key), value as ProTableOption['value'])
+          const hit = findOption(opts.getOptions(key), value as SmartTableOption['value'])
           if (!hit) return String(value)
           const label = optionLabel(hit)
           return tag
@@ -242,7 +242,7 @@ export function useColumns<T>(opts: UseColumnsOpts<T>): UseColumnsReturn<T> {
     return result as DataTableColumn<T>
   }
 
-  function specialToNaive(col: ProTableSpecialColumn<T>): DataTableColumn<T> {
+  function specialToNaive(col: SmartTableSpecialColumn<T>): DataTableColumn<T> {
     const { type, title, renderExpand, ...rest } = col
     if (type === 'index') {
       return {
@@ -261,7 +261,7 @@ export function useColumns<T>(opts: UseColumnsOpts<T>): UseColumnsReturn<T> {
   }
 
   /** 最终列:特殊列(声明序,恒在前)+ 数据列(managed 按设置排序,hideInSetting 保持声明位)。 */
-  const orderedVisibleData = computed<Array<{ col: ProTableDataColumn<T>; fixed?: 'left' | 'right'; managed: boolean }>>(() => {
+  const orderedVisibleData = computed<Array<{ col: SmartTableDataColumn<T>; fixed?: 'left' | 'right'; managed: boolean }>>(() => {
     const cols = dataCols.value
     const eff = effectiveChecks.value
     const colByKey = new Map(cols.map((c) => [c.key, c]))
@@ -269,7 +269,7 @@ export function useColumns<T>(opts: UseColumnsOpts<T>): UseColumnsReturn<T> {
     cols.forEach((c, i) => {
       if (!c.hideInSetting) managedSlots.push(i)
     })
-    const result: Array<{ col: ProTableDataColumn<T>; fixed?: 'left' | 'right'; managed: boolean } | undefined> = new Array(
+    const result: Array<{ col: SmartTableDataColumn<T>; fixed?: 'left' | 'right'; managed: boolean } | undefined> = new Array(
       cols.length,
     )
     cols.forEach((c, i) => {
@@ -293,7 +293,7 @@ export function useColumns<T>(opts: UseColumnsOpts<T>): UseColumnsReturn<T> {
   const scrollX = computed(() => {
     let sum = 0
     for (const col of specialCols.value) sum += Number(col.width ?? d.indexWidth)
-    const walk = (cols: ProTableDataColumn<T>[]) => {
+    const walk = (cols: SmartTableDataColumn<T>[]) => {
       for (const c of cols) {
         if (c.children?.length) walk(c.children)
         else sum += Number(c.width ?? c.minWidth ?? d.fixedFallbackWidth)

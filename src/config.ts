@@ -1,10 +1,10 @@
-// 全局默认值注入:宿主 provide 一次,所有 ProTable 继承。
+// 全局默认值注入:宿主 provide 一次,所有 SmartTable 继承。
 // 优先级恒为 实例 prop / 列显式值 > 全局默认 > 内置兜底。
 // 不 provide 时全部取内置兜底(BUILTIN_DEFAULTS)。
 import { inject, type InjectionKey, type MaybeRefOrGetter } from 'vue'
-import type { Density, ProTableLabels } from './types'
+import type { Density, SmartTableLabels } from './types'
 
-export interface ProTableDefaults {
+export interface SmartTableDefaults {
   /** 单元格默认对齐;内置兜底 'center'。 */
   align?: 'left' | 'center' | 'right'
   /** 表头默认对齐;内置兜底 'center'。 */
@@ -30,14 +30,14 @@ export interface ProTableDefaults {
   /** activeRowKey 命中行高亮背景;缺省走 CSS 变量默认值。 */
   activeRowBg?: string
   /** 组件 chrome 文案;传 ref/getter 即随 locale 响应(渲染期 toValue 解引用)。 */
-  labels?: MaybeRefOrGetter<Partial<ProTableLabels>>
+  labels?: MaybeRefOrGetter<Partial<SmartTableLabels>>
 }
 
 /** provide/inject 键。 */
-export const PRO_TABLE_DEFAULTS: InjectionKey<ProTableDefaults> = Symbol('pro-table-defaults')
+export const SMART_TABLE_DEFAULTS: InjectionKey<SmartTableDefaults> = Symbol('smart-table-defaults')
 
 /** 解析后的默认值:标量字段全部有值,labels 保持惰性(渲染期解引用)。 */
-export type ResolvedProTableDefaults = {
+export type ResolvedSmartTableDefaults = {
   align: 'left' | 'center' | 'right'
   titleAlign: 'left' | 'center' | 'right'
   emptyText: string
@@ -50,11 +50,11 @@ export type ResolvedProTableDefaults = {
   dateValueFormat: string
   searchCols: number | string
   activeRowBg?: string
-  labels?: MaybeRefOrGetter<Partial<ProTableLabels>>
+  labels?: MaybeRefOrGetter<Partial<SmartTableLabels>>
 }
 
 /** 内置兜底常量 —— 未注入全局默认、或注入值为 undefined 的字段取这里。 */
-export const BUILTIN_DEFAULTS: ResolvedProTableDefaults = {
+export const BUILTIN_DEFAULTS: ResolvedSmartTableDefaults = {
   align: 'center',
   titleAlign: 'center',
   emptyText: '—',
@@ -68,15 +68,15 @@ export const BUILTIN_DEFAULTS: ResolvedProTableDefaults = {
   searchCols: '1 s:2 m:3 l:4',
 }
 
-/** 宿主 main.ts:app.provide(PRO_TABLE_DEFAULTS, createProTableDefaults({...}))。仅为类型/自文档。 */
-export function createProTableDefaults(d: ProTableDefaults): ProTableDefaults {
+/** 宿主 main.ts:app.provide(SMART_TABLE_DEFAULTS, createSmartTableDefaults({...}))。仅为类型/自文档。 */
+export function createSmartTableDefaults(d: SmartTableDefaults): SmartTableDefaults {
   return d
 }
 
 /** 合并:内置兜底 + 已注入的非 undefined 字段(undefined 键不得覆盖兜底)。 */
-export function resolveDefaults(injected?: ProTableDefaults | null): ResolvedProTableDefaults {
+export function resolveDefaults(injected?: SmartTableDefaults | null): ResolvedSmartTableDefaults {
   if (!injected) return { ...BUILTIN_DEFAULTS }
-  const out: ResolvedProTableDefaults = { ...BUILTIN_DEFAULTS }
+  const out: ResolvedSmartTableDefaults = { ...BUILTIN_DEFAULTS }
   for (const [k, v] of Object.entries(injected)) {
     if (v !== undefined) (out as Record<string, unknown>)[k] = v
   }
@@ -85,6 +85,6 @@ export function resolveDefaults(injected?: ProTableDefaults | null): ResolvedPro
 }
 
 /** 组件内取值:inject + 内置兜底合并。必须在 setup 内调用。 */
-export function useProTableDefaults(): ResolvedProTableDefaults {
-  return resolveDefaults(inject(PRO_TABLE_DEFAULTS, null))
+export function useSmartTableDefaults(): ResolvedSmartTableDefaults {
+  return resolveDefaults(inject(SMART_TABLE_DEFAULTS, null))
 }

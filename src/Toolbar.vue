@@ -2,12 +2,12 @@
 // 表格卡片头:标题 + 左侧操作区(#left)+ 右侧工具按钮(刷新/密度/列设置 #settings)。
 import { computed, type PropType } from 'vue'
 import { NButton, NDropdown, NSpace, NTooltip } from 'naive-ui'
-import type { Density, ProTableLabels, ToolbarConfig } from './types'
+import type { Density, SmartTableLabels, ToolbarConfig } from './types'
 import { DensityIcon, RefreshIcon } from './icons'
 
 const props = defineProps({
   title: { type: String, default: undefined },
-  labels: { type: Object as PropType<ProTableLabels>, required: true },
+  labels: { type: Object as PropType<SmartTableLabels>, required: true },
   config: { type: Object as PropType<ToolbarConfig | false>, default: () => ({}) },
   density: { type: String as PropType<Density>, required: true },
 })
@@ -26,9 +26,9 @@ const densityOptions = computed(() => [
 </script>
 
 <template>
-  <div class="pro-table-toolbar">
-    <div class="pro-table-toolbar-main">
-      <h3 v-if="$slots.title || title" class="pro-table-title">
+  <div class="smart-table-toolbar">
+    <div class="smart-table-toolbar-main">
+      <h3 v-if="$slots.title || title" class="smart-table-title">
         <slot name="title">{{ title }}</slot>
       </h3>
       <slot name="left" />
@@ -64,20 +64,20 @@ const densityOptions = computed(() => [
 </template>
 
 <style scoped>
-.pro-table-toolbar {
+.smart-table-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
 }
-.pro-table-toolbar-main {
+.smart-table-toolbar-main {
   display: flex;
   align-items: center;
   gap: 12px;
   min-width: 0;
 }
-.pro-table-title {
+.smart-table-title {
   margin: 0;
   font-size: 16px;
   font-weight: 600;

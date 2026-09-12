@@ -1,19 +1,19 @@
 <script setup lang="ts" generic="T">
-// 唯一胶水层:useProTable(数据)+ useOptions(字典)+ useColumns(列/设置)组装。
+// 唯一胶水层:useSmartTable(数据)+ useOptions(字典)+ useColumns(列/设置)组装。
 // props 用运行时声明 + PropType:泛型 + 复杂导入类型下比纯类型声明稳。
 import { computed, toValue, useAttrs, useSlots, watch, type PropType, type Slots } from 'vue'
 import { NCard, NDataTable } from 'naive-ui'
 import type { DataTableInst, PaginationInfo, PaginationProps } from 'naive-ui'
 import type {
   Density,
-  ProTableColumn,
-  ProTableDataColumn,
-  ProTableFetcher,
-  ProTableLabels,
+  SmartTableColumn,
+  SmartTableDataColumn,
+  SmartTableFetcher,
+  SmartTableLabels,
   SearchFormConfig,
   ToolbarConfig,
 } from './types'
-import { cleanParams, useProTable } from './useProTable'
+import { cleanParams, useSmartTable } from './useSmartTable'
 import { useOptions } from './useOptions'
 import {
   deriveInitParams,
@@ -22,18 +22,18 @@ import {
   useColumns,
 } from './useColumns'
 import { mergeLabels } from './labels'
-import { useProTableDefaults } from './config'
+import { useSmartTableDefaults } from './config'
 import SearchForm from './SearchForm.vue'
 import Toolbar from './Toolbar.vue'
 import ColumnSettings from './ColumnSettings.vue'
 import { ref } from 'vue'
 import { useRowDrag } from './useRowDrag'
 
-defineOptions({ name: 'ProTable', inheritAttrs: false })
+defineOptions({ name: 'SmartTable', inheritAttrs: false })
 
 const props = defineProps({
-  columns: { type: Array as PropType<ProTableColumn<T>[]>, required: true },
-  fetcher: { type: Function as PropType<ProTableFetcher<T>>, default: undefined },
+  columns: { type: Array as PropType<SmartTableColumn<T>[]>, required: true },
+  fetcher: { type: Function as PropType<SmartTableFetcher<T>>, default: undefined },
   data: { type: Array as PropType<T[]>, default: undefined },
   rowKey: { type: [String, Function] as PropType<string | ((row: T) => string | number)>, default: 'id' },
   params: { type: Object as PropType<Record<string, any>>, default: undefined },
@@ -45,7 +45,7 @@ const props = defineProps({
   title: { type: String, default: undefined },
   storageKey: { type: String, default: undefined },
   defaultDensity: { type: String as PropType<Density>, default: undefined },
-  labels: { type: Object as PropType<Partial<ProTableLabels>>, default: undefined },
+  labels: { type: Object as PropType<Partial<SmartTableLabels>>, default: undefined },
   activeRowKey: { type: [String, Number] as PropType<string | number | null>, default: undefined },
   rowDraggable: { type: Boolean, default: false },
   dragHandle: { type: String, default: undefined },
@@ -76,14 +76,14 @@ defineSlots<{
   /** 自定义单元格:#cell-{列 key} */
   [cell: `cell-${string}`]: ((props: { row: T; index: number }) => any) | undefined
   /** 自定义表头:#header-{列 key} */
-  [header: `header-${string}`]: ((props: { column: ProTableDataColumn<T> }) => any) | undefined
+  [header: `header-${string}`]: ((props: { column: SmartTableDataColumn<T> }) => any) | undefined
 }>()
 
 // 显式标注:slots 进入 useColumns 又参与 expose 类型,dts 生成会因自引用推断报 TS7022
 const slots: Slots = useSlots()
 const attrs = useAttrs()
 
-const defaults = useProTableDefaults()
+const defaults = useSmartTableDefaults()
 
 const isRemote = computed(() => !!props.fetcher)
 // 三层合并:内置 < 全局默认(defaults.labels,渲染期 toValue 解引用保持 locale 响应)< 实例 prop
@@ -100,7 +100,7 @@ function sortToParams(): Record<string, string> {
   return s ? { sortField: s.field, sortOrder: s.order === 'ascend' ? 'asc' : 'desc' } : {}
 }
 
-const table = useProTable<T>(
+const table = useSmartTable<T>(
   // 包一层保证始终取最新的 props.fetcher(模板内联箭头每次渲染都是新引用)
   (p) => props.fetcher!(p),
   {
@@ -224,7 +224,7 @@ const mergedRowProps = computed<RowPropsFn>(() => {
   return (row: T, index: number) => {
     const base = host ? { ...host(row, index) } : {}
     const isActive = active !== undefined && active !== null && rowKeyFn.value(row) === active
-    const cls = [base.class, isActive ? 'pro-table-row--active' : ''].filter(Boolean).join(' ')
+    const cls = [base.class, isActive ? 'smart-table-row--active' : ''].filter(Boolean).join(' ')
     const hostClick = base.onClick as ((e: MouseEvent) => void) | undefined
     return {
       ...base,
@@ -276,7 +276,7 @@ defineExpose({
 </script>
 
 <template>
-  <div ref="rootRef" class="pro-table" :style="{ '--pro-table-active-row-bg': defaults.activeRowBg }">
+  <div ref="rootRef" class="smart-table" :style="{ '--smart-table-active-row-bg': defaults.activeRowBg }">
     <SearchForm
       v-if="props.search !== false && searchDefs.length > 0"
       :fields="searchDefs"
@@ -291,7 +291,7 @@ defineExpose({
       @reset="onReset"
     />
 
-    <n-card :bordered="true" class="pro-table-card">
+    <n-card :bordered="true" class="smart-table-card">
       <Toolbar
         v-if="showToolbar"
         :title="props.title"
@@ -337,14 +337,14 @@ defineExpose({
 </template>
 
 <style scoped>
-.pro-table {
+.smart-table {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
-/* activeRowKey 命中行高亮:背景走 --pro-table-active-row-bg,宿主/主题可覆盖。
+/* activeRowKey 命中行高亮:背景走 --smart-table-active-row-bg,宿主/主题可覆盖。
    :deep 打进内层 n-data-table 的 td —— 包内处理,消费端不必自己写 :deep。 */
-.pro-table :deep(.pro-table-row--active > td) {
-  background-color: var(--pro-table-active-row-bg, rgba(99, 102, 241, 0.08));
+.smart-table :deep(.smart-table-row--active > td) {
+  background-color: var(--smart-table-active-row-bg, rgba(99, 102, 241, 0.08));
 }
 </style>

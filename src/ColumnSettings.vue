@@ -2,13 +2,13 @@
 // 列设置面板:显隐勾选 + 原生 HTML5 拖拽排序 + 固定切换 + 恢复默认。零拖拽库依赖。
 import { ref, type PropType, type VNodeChild } from 'vue'
 import { NButton, NCheckbox, NPopover, NTooltip, useThemeVars } from 'naive-ui'
-import type { ProTableLabels } from './types'
+import type { SmartTableLabels } from './types'
 import type { SettingItem } from './useColumns'
 import { ColumnsIcon, DragIcon } from './icons'
 
 defineProps({
   items: { type: Array as PropType<SettingItem[]>, required: true },
-  labels: { type: Object as PropType<ProTableLabels>, required: true },
+  labels: { type: Object as PropType<SmartTableLabels>, required: true },
 })
 
 const emit = defineEmits<{
@@ -55,11 +55,11 @@ function toggleFixed(item: SettingItem, side: 'left' | 'right') {
       </n-tooltip>
     </template>
 
-    <div class="pro-table-colset">
+    <div class="smart-table-colset">
       <div
         v-for="(item, idx) in items"
         :key="item.key"
-        class="pro-table-colset-row"
+        class="smart-table-colset-row"
         :class="{ 'is-over': dragOver === idx }"
         :style="dragOver === idx ? { background: themeVars.hoverColor } : undefined"
         draggable="true"
@@ -69,11 +69,11 @@ function toggleFixed(item: SettingItem, side: 'left' | 'right') {
         @drop.prevent="onDrop(idx)"
         @dragend="((dragFrom = null), (dragOver = null))"
       >
-        <span class="pro-table-colset-drag" :style="{ color: themeVars.textColor3 }"><DragIcon /></span>
+        <span class="smart-table-colset-drag" :style="{ color: themeVars.textColor3 }"><DragIcon /></span>
         <n-checkbox :checked="item.show" @update:checked="(v: boolean) => emit('toggle', item.key, v)">
           <component :is="() => renderTitle(item.title)" />
         </n-checkbox>
-        <span class="pro-table-colset-pins">
+        <span class="smart-table-colset-pins">
           <n-tooltip trigger="hover">
             <template #trigger>
               <n-button
@@ -102,7 +102,7 @@ function toggleFixed(item: SettingItem, side: 'left' | 'right') {
           </n-tooltip>
         </span>
       </div>
-      <div class="pro-table-colset-footer" :style="{ borderTop: `1px solid ${themeVars.dividerColor}` }">
+      <div class="smart-table-colset-footer" :style="{ borderTop: `1px solid ${themeVars.dividerColor}` }">
         <n-button quaternary size="tiny" @click="emit('reset')">{{ labels.columnSettingsReset }}</n-button>
       </div>
     </div>
@@ -110,32 +110,32 @@ function toggleFixed(item: SettingItem, side: 'left' | 'right') {
 </template>
 
 <style scoped>
-.pro-table-colset {
+.smart-table-colset {
   min-width: 200px;
   max-height: 320px;
   overflow: auto;
 }
-.pro-table-colset-row {
+.smart-table-colset-row {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 4px 6px;
   border-radius: 6px;
 }
-.pro-table-colset-drag {
+.smart-table-colset-drag {
   cursor: grab;
   display: inline-flex;
   align-items: center;
 }
-.pro-table-colset-row :deep(.n-checkbox) {
+.smart-table-colset-row :deep(.n-checkbox) {
   flex: 1;
   min-width: 0;
 }
-.pro-table-colset-pins {
+.smart-table-colset-pins {
   display: inline-flex;
   gap: 2px;
 }
-.pro-table-colset-footer {
+.smart-table-colset-footer {
   margin-top: 6px;
   padding-top: 6px;
   display: flex;

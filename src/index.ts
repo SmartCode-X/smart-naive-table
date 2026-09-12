@@ -1,36 +1,36 @@
-export { default as ProTable } from './ProTable.vue'
-export { useProTable, cleanParams } from './useProTable'
+export { default as SmartTable } from './SmartTable.vue'
+export { useSmartTable, cleanParams } from './useSmartTable'
 export { useTableCrud } from './useTableCrud'
 export { useOptions, findOption, optionLabel } from './useOptions'
 export { defaultLabels, mergeLabels } from './labels'
 export { formatDate, formatDatetime, formatMoney, applyFormat } from './format'
 export { loadState, saveState, clearState, mergeCols } from './storage'
-export { PRO_TABLE_DEFAULTS, createProTableDefaults, useProTableDefaults } from './config'
-export type { ProTableDefaults } from './config'
+export { SMART_TABLE_DEFAULTS, createSmartTableDefaults, useSmartTableDefaults } from './config'
+export type { SmartTableDefaults } from './config'
 
 export type {
   PageResult,
-  ProTableParams,
-  ProTableFetcher,
+  SmartTableParams,
+  SmartTableFetcher,
   TagType,
-  ProTableOption,
+  SmartTableOption,
   OptionsSource,
   CellFormat,
   SearchFieldType,
   SearchRenderCtx,
   SearchConfig,
-  ProTableDataColumn,
-  ProTableSpecialColumn,
-  ProTableColumn,
+  SmartTableDataColumn,
+  SmartTableSpecialColumn,
+  SmartTableColumn,
   Density,
   SearchFormConfig,
   ToolbarConfig,
-  ProTableProps,
-  ProTableInst,
-  UseProTableOptions,
-  UseProTableReturn,
+  SmartTableProps,
+  SmartTableInst,
+  UseSmartTableOptions,
+  UseSmartTableReturn,
   UseTableCrudOptions,
   UseTableCrudReturn,
-  ProTableLabels,
+  SmartTableLabels,
   StoredTableState,
 } from './types'

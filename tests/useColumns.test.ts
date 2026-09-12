@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Slots, VNode } from 'vue'
 import { useColumns } from '../src/useColumns'
 import { resolveDefaults } from '../src/config'
-import type { ProTableColumn, ProTableOption } from '../src/types'
+import type { SmartTableColumn, SmartTableOption } from '../src/types'
 
 interface Row {
   name: string
@@ -11,7 +11,7 @@ interface Row {
 }
 
 function build(
-  columns: ProTableColumn<Row>[],
+  columns: SmartTableColumn<Row>[],
   defaultsIn?: Parameters<typeof resolveDefaults>[0],
   slots: Slots = {},
   sortState?: () => { field: string; order: 'ascend' | 'descend' } | null,
@@ -19,7 +19,7 @@ function build(
   const opts = {
     columns: () => columns,
     defaultDensity: 'comfortable' as const,
-    getOptions: (k: string): ProTableOption[] =>
+    getOptions: (k: string): SmartTableOption[] =>
       k === 'st' ? [{ label: 'A', value: 1, tagType: 'success' as const }] : [],
     slots,
     indexOffset: () => 0,
