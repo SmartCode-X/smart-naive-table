@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { darkTheme, dateZhCN, NConfigProvider, NMessageProvider, NSpace, NSwitch, NTabPane, NTabs, zhCN } from 'naive-ui'
 import DemoBasic from './DemoBasic.vue'
 import DemoWide from './DemoWide.vue'
+import DemoFilter from './DemoFilter.vue'
 import DemoCrud from './DemoCrud.vue'
 import { locale, tt } from './locale'
 import { mockState } from './mock'
@@ -34,6 +35,7 @@ const naiveDateLocale = computed(() => (isZh.value ? dateZhCN : null))
         <n-tabs type="line" default-value="basic">
           <n-tab-pane name="basic" :tab="tt('基础', 'Basic')()"><DemoBasic /></n-tab-pane>
           <n-tab-pane name="wide" :tab="tt('宽表', 'Wide')()"><DemoWide /></n-tab-pane>
+          <n-tab-pane name="filter" :tab="tt('过滤 / 列宽', 'Filter / Resize')()"><DemoFilter /></n-tab-pane>
           <n-tab-pane name="crud" :tab="'CRUD'"><DemoCrud /></n-tab-pane>
         </n-tabs>
       </div>

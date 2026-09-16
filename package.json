@@ -1,6 +1,6 @@
 {
   "name": "smart-naive-table",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Columns-driven data table for Vue 3 + Naive UI: auto search form, remote pagination adapter, dict cell rendering, persistent column settings, density toggle, i18n via labels.",
   "type": "module",
   "license": "Apache-2.0",
@@ -59,6 +59,8 @@
   "devDependencies": {
     "@types/sortablejs": "^1.15.0",
     "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^25.0.1",
     "naive-ui": "^2.41.0",
     "typescript": "^5.7.3",
     "vite": "^6.0.11",

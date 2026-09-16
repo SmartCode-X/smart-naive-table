@@ -16,8 +16,31 @@ describe('storage', () => {
   })
 
   it('round-trips state', () => {
-    saveState('t', 'compact', [{ key: 'a', show: true }])
-    expect(loadState('t')).toEqual({ v: 1, density: 'compact', cols: [{ key: 'a', show: true }] })
+    saveState('t', 'compact', [{ key: 'a', show: true }], { a: 180 })
+    expect(loadState('t')).toEqual({
+      v: 2,
+      density: 'compact',
+      cols: [{ key: 'a', show: true }],
+      widths: { a: 180 },
+    })
+  })
+
+  it('defaults widths to an empty map when not given', () => {
+    saveState('t', 'comfortable', [{ key: 'a', show: true }])
+    expect(loadState('t')?.widths).toEqual({})
+  })
+
+  it('upgrades v1 state in place instead of discarding the user column settings', () => {
+    localStorage.setItem(
+      'protable:v1',
+      JSON.stringify({ v: 1, density: 'compact', cols: [{ key: 'a', show: false, fixed: 'left' }] }),
+    )
+    expect(loadState('v1')).toEqual({
+      v: 2,
+      density: 'compact',
+      cols: [{ key: 'a', show: false, fixed: 'left' }],
+      widths: {},
+    })
   })
 
   it('returns null for missing / corrupted / version-mismatched state', () => {
@@ -26,8 +49,26 @@ describe('storage', () => {
     localStorage.setItem('protable:bad', 'not json')
     expect(loadState('bad')).toBeNull()
 
-    localStorage.setItem('protable:v2', JSON.stringify({ v: 2, density: 'compact', cols: [] }))
-    expect(loadState('v2')).toBeNull()
+    // 结构不对(cols 不是数组)→ 丢弃
+    localStorage.setItem('protable:noCols', JSON.stringify({ v: 2, density: 'compact' }))
+    expect(loadState('noCols')).toBeNull()
+
+    // 未来版本 → 丢弃回声明态
+    localStorage.setItem('protable:v9', JSON.stringify({ v: 9, density: 'compact', cols: [] }))
+    expect(loadState('v9')).toBeNull()
+  })
+
+  it('drops a widths field that is not an object', () => {
+    localStorage.setItem('protable:w', JSON.stringify({ v: 2, density: 'compact', cols: [], widths: [1, 2] }))
+    expect(loadState('w')?.widths).toEqual({})
+  })
+
+  it('drops a widths map whose values are not numbers(损坏/手改的存储不该流入列宽运算)', () => {
+    localStorage.setItem(
+      'protable:badWidths',
+      JSON.stringify({ v: 2, density: 'compact', cols: [], widths: { name: '180px' } }),
+    )
+    expect(loadState('badWidths')?.widths).toEqual({})
   })
 
   it('clearState removes the entry', () => {

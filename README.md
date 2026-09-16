@@ -29,6 +29,7 @@
 - **列驱动**：列上加 `search` 就是搜索项，加 `options` 就能翻译单元格、生成下拉框，一处配置多处生效
 - **一个函数对接后端**：`fetcher` 入参 `{ page, pageSize, ...搜索条件 }`，返回 `{ items, total }`
 - **开箱即用的工具栏**：刷新、密度切换、列设置（显隐 / 拖拽排序 / 左右固定），可记住用户的设置
+- **表头过滤 + 列宽拖拽**：列上加 `filter` 就有漏斗，支持勾选式与「动作 + 值」条件式两种面板；列宽拖完能记住，拖一列只动一列
 - **跟随 Naive 主题**：亮色 / 暗色、语言都跟随 `<n-config-provider>`
 - **细节到位**：请求防竞态、空参数自动剔除、固定列宽度兜底、异步字典去重
 - **轻量**：唯一运行时依赖 `sortablejs`（只在开启行拖拽时加载），ESM，自带 TypeScript 类型
@@ -182,6 +183,88 @@ import { NButton } from 'naive-ui'
 - 列定义改动后自动合并：删掉的列被剔除，新增的列插到声明位置
 - `hide: true` 初始隐藏（可在面板中勾回）；`hideInSetting: true` 不进面板
 
+### 表头过滤
+
+列上加 `filter` 就会在表头出现漏斗图标，面板有两种形态，按列自动选：
+
+- **勾选式**（列上有 `options`）：直接勾选字典项，多选时内部等价于「若干 *等于* 条件取或」
+- **条件式**（列上没有 `options`）：一行「动作 + 值」；动作按值类型给默认集合（文本给 *包含 / 不包含 / 等于 / 不等于*，数字和日期给 *等于 / 大于 / 小于* 等）
+
+```ts
+const columns: SmartTableColumn<Row>[] = [
+  // 有字典 → 勾选式；multiple: false 变单选
+  { key: 'status', title: '状态', options: statusOptions, tag: true, filter: true },
+  // 没字典 → 条件式，文本列默认「包含 / 不包含 / 等于 / 不等于」
+  { key: 'name', title: '姓名', filter: true },
+  // 数字列：给一个初始过滤值（也是面板里「重置」的恢复目标）
+  {
+    key: 'salary',
+    title: '薪资',
+    format: 'money',
+    filter: { defaultValue: { logic: 'and', conditions: [{ action: 'gte', value: 10000 }] } },
+  },
+  // 日期列：值是纯日期串时按「整天」比较，「等于 2024-03-05」能命中当天任意时刻
+  { key: 'createTime', title: '创建时间', format: 'datetime', filter: true },
+]
+```
+
+**远程模式**（传了 `fetcher`）过滤在后端做：条件变化后回到第 1 页重查，参数默认长这样，后端照着翻成 SQL / ORM 条件即可：
+
+```jsonc
+{
+  "page": 1,
+  "pageSize": 10,
+  "filters": [
+    { "field": "name", "logic": "and", "conditions": [{ "action": "contains", "value": "张" }] },
+    { "field": "status", "logic": "or", "conditions": [{ "action": "equal", "value": 1 }, { "action": "equal", "value": 2 }] }
+  ]
+}
+```
+
+后端形状不一样就传自己的序列化器（也可以用 `createSmartTableDefaults({ filterSerializer })` 全局设一次）：
+
+```vue
+<SmartTable :columns="columns" :fetcher="fetchList" :filter-serializer="toMyBackendShape" />
+```
+
+**静态模式**（传了 `data`）过滤在前端做，不用写任何适配代码。需要自定义匹配就写 `filter.filter`：
+
+```ts
+{ key: 'tags', title: '标签', filter: { filter: (value, row) => row.tags.some((t) => matchFilterValue(value, t)) } }
+```
+
+面板也可以整个自己画，`ctx` 含 `value`、`setValue`、`close`：
+
+```ts
+{ key: 'deptId', title: '部门', filter: { render: ({ value, setValue, close }) => h(MyPanel, { value, setValue, close }) } }
+```
+
+过滤态可以编程式读写：`tableRef.filters`、`tableRef.setFilter(key, value)`、`tableRef.clearFilters()`，变化时触发 `@filter-change`。
+
+整表一键关掉（和 `:search="false"` 同一套写法，列上的 `filter` 声明一并失效）：
+
+```vue
+<SmartTable :columns="columns" :fetcher="fetchList" :filter="false" />
+```
+
+也可以 `createSmartTableDefaults({ filterable: false })` 全局关，再用实例上的 `:filter="true"` 单独打开某张表。
+
+### 列宽拖拽
+
+表格上加 `resizable`，所有数据列的表头右边缘就能拖动改宽：
+
+```vue
+<SmartTable :columns="columns" :fetcher="fetchList" storage-key="staff" resizable @column-resize="onResize" />
+```
+
+- 单独某列不想让拖：列上写 `resizable: false`（列上的值永远优先于表格上的开关）
+- 传了 `storage-key` 就会连同列设置一起存进 localStorage，刷新页面保持
+- 拖动过程中持续触发 `@column-resize`（`key`、`width`），写 localStorage 内部做了防抖
+- **拖某一列只改这一列**：首次拖动时会把所有列（含序号 / 勾选列）钉成当前实际宽度，同时把表格切到 `table-layout: fixed`、宽度写死成列宽之和。此后左侧的列纹丝不动，只有被拖的列跟着鼠标走
+- 列宽被钉住后，表格不再按容器宽度拉伸：把列收窄会在右侧留白，加宽则出现横向滚动。想回到自适应，点列设置里的「恢复默认」
+- 拖不到 0 宽：可拖拽列自动补 `minWidth`（默认 60），列上写了 `minWidth` 以列上的为准
+- 列设置里的「恢复默认」会把宽度一起还原
+
 ### 更多场景
 
 | 场景 | 写法 |
@@ -194,7 +277,9 @@ import { NButton } from 'naive-ui'
 | 多选 | 特殊列 `{ type: 'selection' }` + `v-model:checked-row-keys` |
 | 主从表高亮 | `:active-row-key="currentId"` + `@row-click` |
 | 行拖拽排序 | `row-draggable` + `@row-drag-sort`，组件只调整顺序，保存由你调用接口 |
-| 列宽拖拽 | 列上写 `resizable: true` |
+| 列宽拖拽 | 表格上写 `resizable`，或列上写 `resizable: true` |
+| 表头过滤 | 列上写 `filter: true`；远程模式收到 `filters` 参数 |
+| 单元格竖线 | 默认开启(内部 `single-line: false`);想回单线样式写 `:single-line="true"` |
 | 虚拟滚动 | `virtual-scroll` + `max-height` |
 | 合计行 | `:summary="(pageData) => ..."` |
 | 其它表格属性 | 直接写在 SmartTable 上，原样传给 `n-data-table`（如 `striped`、`bordered`） |
@@ -310,11 +395,14 @@ import { NConfigProvider, zhCN, dateZhCN } from 'naive-ui'
 
 数据列支持 Naive UI 列的全部属性（`width`、`minWidth`、`fixed`、`align`、`ellipsis`、`sorter`、`resizable` 等），另外增加：
 
+> `filter` 由本包接管（比 Naive 原生列过滤多了条件面板与远程联动），因此不再透传 Naive 的 `filter` / `filterOptions` 等原生过滤属性。
+
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `key` | `string` | **必填**。行数据字段名，同时是搜索参数名、插槽名 |
 | `title` | `string \| () => VNodeChild` | 列标题；写成函数可随语言切换 |
 | `search` | `boolean \| SearchConfig` | 生成搜索项；`true` 时有 `options` 用下拉框，否则用输入框 |
+| `filter` | `boolean \| FilterConfig` | 生成表头过滤；`true` 时有 `options` 用勾选面板，否则用条件面板 |
 | `options` | `Option[] \| Ref<Option[]> \| () => Promise<Option[]>` | 字典：翻译单元格，同时作为搜索下拉选项 |
 | `tag` | `boolean` | 翻译结果显示为 `NTag`，颜色取选项的 `tagType` |
 | `format` | `'date' \| 'datetime' \| 'money' \| (value, row) => string` | 格式化显示 |
@@ -341,6 +429,26 @@ import { NConfigProvider, zhCN, dateZhCN } from 'naive-ui'
 | `props` | `object` | 透传给对应的 Naive 控件 |
 | `render` | `(ctx) => VNodeChild` | 完全自定义控件；`ctx` 含 `value`、`setValue`、`params`、`search` |
 
+### FilterConfig
+
+| 字段 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `mode` | `'options' \| 'condition'` | 有字典则 `'options'` | 面板形态：勾选列表 / 条件行 |
+| `key` | `string` | 同列 `key` | 过滤参数名（与展示字段不同时覆盖） |
+| `options` | 同列 `options` | 复用列上的字典 | 只给过滤用的候选项 |
+| `multiple` | `boolean` | `true` | 勾选面板是否多选 |
+| `type` | `'input' \| 'number' \| 'select' \| 'date'` | 按列 `format` 推断 | 条件面板的值控件 |
+| `actions` | `FilterAction[]` | 按 `type` 给 | 可选动作，见下 |
+| `defaultValue` | `FilterValue \| null` | `null` | 初始过滤值，也是面板里「重置」的恢复目标 |
+| `props` | `object` | — | 透传给值控件 |
+| `render` | `(ctx) => VNodeChild` | — | 自定义整个面板；`ctx` 含 `value`、`setValue`、`close` |
+| `filter` | `(value, row) => boolean` | 内置条件求值 | 静态 `data` 模式的自定义匹配（远程模式无效） |
+
+- **FilterAction**：`'equal'`（等于）、`'notEqual'`、`'contains'`（包含）、`'notContains'`、`'gt'`（大于）、`'gte'`、`'lt'`（小于）、`'lte'`
+- **FilterValue**：`{ logic: 'and' | 'or', conditions: { action, value }[] }`；值为空（`null` / `''` / `[]`）的条件不参与求值，全空即未过滤
+- 各列之间恒为「与」，列内部由 `logic` 决定
+- 内置面板产出单条条件（条件式）或若干 `equal` 取「或」（勾选式）；多条条件只来自 `defaultValue` 或编程式 `setFilter`，求值与序列化都支持
+
 ### Props
 
 | 属性 | 类型 | 默认值 | 说明 |
@@ -354,6 +462,7 @@ import { NConfigProvider, zhCN, dateZhCN } from 'naive-ui'
 | `default-page-size` | `number` | `10` | 默认每页条数 |
 | `pagination` | `false \| PaginationProps` | — | `false` 隐藏分页；传对象与内置配置合并 |
 | `search` | `false \| SearchFormConfig` | — | 搜索区配置（见下表）；`false` 隐藏 |
+| `filter` | `boolean` | `true` | `false` 关掉全部表头过滤（即使列上写了 `filter`） |
 | `toolbar` | `false \| { refresh, density, columnSettings }` | 全部开启 | 工具栏按钮开关 |
 | `title` | `string` | — | 表格标题，也可用 `#title` 插槽 |
 | `storage-key` | `string` | — | 设置后，列设置和密度保存到 localStorage |
@@ -361,6 +470,8 @@ import { NConfigProvider, zhCN, dateZhCN } from 'naive-ui'
 | `labels` | `Partial<SmartTableLabels>` | 英文 | 覆盖组件文案，传 `computed` 可随语言切换 |
 | `active-row-key` | `string \| number \| null` | — | 高亮对应的行 |
 | `row-draggable` | `boolean` | `false` | 开启行拖拽排序 |
+| `resizable` | `boolean` | `false` | 所有数据列可拖拽调整列宽；列上的 `resizable` 优先 |
+| `filter-serializer` | `(state) => object` | 见「表头过滤」 | 过滤态 → 请求参数的序列化 |
 | `drag-handle` | `string` | — | 拖拽手柄的 CSS 选择器，不传则整行可拖 |
 
 其它未列出的属性（如 `striped`、`max-height`、`checked-row-keys`、`virtual-scroll`）会原样传给 `n-data-table`。
@@ -386,6 +497,8 @@ import { NConfigProvider, zhCN, dateZhCN } from 'naive-ui'
 | `error` | `err` | 请求失败（组件不弹提示，由你处理） |
 | `row-click` | `row, index` | 点击行 |
 | `row-drag-sort` | `{ from, to, reordered }` | 行拖拽结束 |
+| `filter-change` | `key, value, state` | 表头过滤变化（`clearFilters` 时 `key` 为空串） |
+| `column-resize` | `key, width` | 拖拽列宽（拖动过程中持续触发） |
 
 ### 插槽
 
@@ -409,6 +522,10 @@ import { NConfigProvider, zhCN, dateZhCN } from 'naive-ui'
 | `reloadOptions(key?)` | 重新加载异步字典；不传 `key` 则全部重新加载 |
 | `loading` / `rows` / `pagination` | 加载状态、当前行数据、分页状态 |
 | `params` | 响应式搜索参数，可直接读写 |
+| `filters` | 当前过滤态（只读快照） |
+| `setFilter(key, value)` | 设置某列过滤；传 `null` 清除。远程模式会回第 1 页重查 |
+| `clearFilters()` | 清空全部过滤（恢复各列 `defaultValue`） |
+| `columnWidths` | 各列被拖拽后的宽度 |
 | `tableRef` | 原生 `NDataTable` 实例（可调用 `scrollTo` 等） |
 
 ### 全局默认字段
@@ -429,10 +546,15 @@ import { NConfigProvider, zhCN, dateZhCN } from 'naive-ui'
 | `indexWidth` | `64` | 序号列宽度 |
 | `tag` | `{ size: 'small', bordered: false }` | `tag: true` 列的标签样式 |
 | `activeRowBg` | — | 高亮行的背景色 |
+| `resizable` | `false` | 所有表格默认开启列宽拖拽 |
+| `filterable` | `true` | 是否允许列声明表头过滤；`false` 全局关掉 |
+| `resizeMinWidth` | `60` | 可拖拽列的最小宽度 |
+| `filterSerializer` | 见「表头过滤」 | 过滤态 → 请求参数 |
 
 ### 其它导出
 
 - `useSmartTable(fetcher, options)`：组件内部使用的数据核心（加载、分页、搜索、防竞态），不依赖 UI，可自己搭界面
+- `matchFilterValue`、`applyFilters`、`defaultFilterSerializer`、`isFilterActive` 等过滤内核函数（与 UI 无关，后端 mock 或自建界面可直接复用）
 - `cleanParams`、`formatDate`、`formatDatetime`、`formatMoney`、`defaultLabels` 等工具函数
 - 全部类型：`SmartTableColumn`、`SmartTableFetcher`、`SmartTableInst`、`SmartTableOption`、`SearchConfig` 等
 
@@ -442,7 +564,11 @@ import { NConfigProvider, zhCN, dateZhCN } from 'naive-ui'
 - 快速翻页时，先发出、后返回的旧响应会被丢弃，不会覆盖新数据
 - 重置时搜索项恢复为 `defaultValue`，没有则为 `null`
 - 固定列未写 `width` 时自动补上宽度（`minWidth` 或 120），避免 Naive 固定列错位
-- `scroll-x` 默认等于可见列的宽度之和，手动传入则以你的为准
+- `scroll-x` 默认等于可见列的宽度之和（含拖拽后的宽度），手动传入则以你的为准
+- 过滤条件变化后回到第 1 页：远程模式重新请求，静态模式在前端过滤
+- 过滤值为空（`null` / `''` / `[]`）的条件会被忽略，不会传给后端；`0` 和 `false` 保留
+- 过滤值是纯日期串（`YYYY-MM-DD`）时按「整天」比较，`等于 2024-03-05` 能命中当天任意时刻
+- 列宽写入 localStorage 做了防抖；存储结构从 `v1` 升到 `v2`，已存的列显隐 / 顺序 / 固定 / 密度照常生效
 
 ## 本地开发
 

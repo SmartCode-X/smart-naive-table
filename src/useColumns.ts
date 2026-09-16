@@ -3,6 +3,12 @@ import { NTag } from 'naive-ui'
 import type { DataTableBaseColumn, DataTableColumn } from 'naive-ui'
 import type {
   Density,
+  FilterAction,
+  FilterConfig,
+  FilterFieldType,
+  FilterMode,
+  FilterRenderCtx,
+  FilterValue,
   OptionsSource,
   SmartTableColumn,
   SmartTableDataColumn,
@@ -13,12 +19,23 @@ import type {
   SearchRenderCtx,
 } from './types'
 import { applyFormat } from './format'
+import { isFilterActive } from './filter'
 import { findOption, optionLabel } from './useOptions'
 import { clearState, loadState, mergeCols, saveState, type DeclaredCol } from './storage'
 import type { ResolvedSmartTableDefaults } from './config'
 
 export function isSpecialColumn<T>(c: SmartTableColumn<T>): c is SmartTableSpecialColumn<T> {
   return 'type' in c && typeof (c as SmartTableSpecialColumn<T>).type === 'string'
+}
+
+/**
+ * 特殊列在 Naive 内部的列 key —— 量宽度、钉宽度都要用它。
+ * selection/expand 的 key 由 Naive 自己生成(见其 utils.getColKey),这里对齐。
+ */
+export function specialColumnKey<T>(col: SmartTableSpecialColumn<T>): string {
+  if (col.type === 'selection') return '__n_selection__'
+  if (col.type === 'expand') return '__n_expand__'
+  return '__index'
 }
 
 /* ======================== 搜索项派生 ======================== */
@@ -67,11 +84,112 @@ export function deriveInitParams(defs: SearchDef[]): Record<string, any> {
   return out
 }
 
-/** 收集列上的字典源(列 key → OptionsSource)。 */
+/**
+ * 收集列上的字典源(列 key → OptionsSource)。
+ * filter.options 单独覆写时挂在 `__filter:{列 key}` 下,与单元格翻译用的字典互不干扰。
+ */
 export function deriveOptionsSources<T>(columns: SmartTableColumn<T>[]): Record<string, OptionsSource> {
   const out: Record<string, OptionsSource> = {}
   for (const col of columns) {
-    if (!isSpecialColumn(col) && col.options) out[col.key] = col.options
+    if (isSpecialColumn(col)) continue
+    if (col.options) out[col.key] = col.options
+    const cfg = typeof col.filter === 'object' ? col.filter : undefined
+    if (cfg?.options) out[filterOptionsKey(col.key)] = cfg.options
+  }
+  return out
+}
+
+/* ======================== 过滤项派生 ======================== */
+
+/** filter.options 覆写时的字典键 —— 与列自身 options 分开缓存。 */
+export function filterOptionsKey(colKey: string): string {
+  return `__filter:${colKey}`
+}
+
+/** 各值类型的默认可选动作(对齐 Bootstrap Blazor 的过滤器分类)。 */
+const DEFAULT_ACTIONS: Record<FilterFieldType, FilterAction[]> = {
+  input: ['contains', 'notContains', 'equal', 'notEqual'],
+  number: ['equal', 'notEqual', 'gt', 'gte', 'lt', 'lte'],
+  date: ['equal', 'notEqual', 'gt', 'gte', 'lt', 'lte'],
+  select: ['equal', 'notEqual'],
+}
+
+/** 一列的过滤项(表头面板渲染 + 本地过滤 + 远程序列化共用)。 */
+export interface FilterDef<T = any> {
+  /** 过滤态的键 / 远程参数字段名(filter.key ?? 列 key)。 */
+  key: string
+  /** 行数据字段名(始终是列 key),本地过滤取值用。 */
+  field: string
+  /** 字典查找键:filter.options 覆写时为 `__filter:{列 key}`,否则列 key。 */
+  optionsKey: string
+  title?: string | (() => VNodeChild)
+  mode: FilterMode
+  multiple: boolean
+  type: FilterFieldType
+  actions: FilterAction[]
+  defaultValue?: FilterValue | null
+  props?: Record<string, unknown>
+  render?: (ctx: FilterRenderCtx) => VNodeChild
+  filter?: (value: FilterValue, row: T) => boolean
+}
+
+/**
+ * 从列定义派生过滤项:带 filter 且会进表格的数据列(hideInTable 的列没有表头,不参与)。
+ * mode 缺省按有无字典推断;condition 模式的值控件类型缺省按 format 推断。
+ */
+export function deriveFilterDefs<T>(columns: SmartTableColumn<T>[]): FilterDef<T>[] {
+  const defs: FilterDef<T>[] = []
+  // 多级表头:filter 只可能声明在叶子列上,分组表头(有 children)只递归、自身不产出 def,
+  // 与 toNaive/freezeWidths 对 children 的递归口径保持一致。
+  const walk = (cols: SmartTableColumn<T>[]) => {
+    for (const col of cols) {
+      if (isSpecialColumn(col)) continue
+      if (col.children?.length) {
+        walk(col.children)
+        continue
+      }
+      if (!col.filter || col.hideInTable) continue
+      const cfg: FilterConfig<T> = col.filter === true ? {} : col.filter
+      const hasOptions = !!(cfg.options ?? col.options)
+      const mode: FilterMode = cfg.mode ?? (hasOptions ? 'options' : 'condition')
+      const type: FilterFieldType =
+        cfg.type ??
+        (hasOptions
+          ? 'select'
+          : col.format === 'date' || col.format === 'datetime'
+            ? 'date'
+            : col.format === 'money'
+              ? 'number'
+              : 'input')
+      defs.push({
+        key: cfg.key ?? col.key,
+        field: col.key,
+        optionsKey: cfg.options ? filterOptionsKey(col.key) : col.key,
+        title: col.title,
+        mode,
+        multiple: cfg.multiple ?? true,
+        type,
+        // 拷贝一份:DEFAULT_ACTIONS[type] 是模块级共享数组,deriveFilterDefs/FilterDef
+        // 是导出的公开 API,调用方 mutate 返回的 actions 不该污染其它列/其它实例。
+        actions: cfg.actions?.length ? cfg.actions : [...DEFAULT_ACTIONS[type]],
+        defaultValue: cfg.defaultValue ?? null,
+        props: cfg.props,
+        render: cfg.render,
+        filter: cfg.filter,
+      })
+    }
+  }
+  walk(columns)
+  return defs
+}
+
+/** 过滤项初值:有 defaultValue 的列进初始过滤态。 */
+export function deriveInitFilters<T>(defs: FilterDef<T>[]): Record<string, FilterValue> {
+  const out: Record<string, FilterValue> = {}
+  for (const d of defs) {
+    // 与 useFilters 里「列定义后追加时」的补种口径一致:条件全空的 defaultValue 视为不生效,
+    // 否则同一份配置会因「初始挂载」还是「后续追加」而给出不同的初始过滤态。
+    if (d.defaultValue && isFilterActive(d.defaultValue)) out[d.key] = d.defaultValue
   }
   return out
 }
@@ -97,6 +215,12 @@ export interface UseColumnsOpts<T> {
   defaults: ResolvedSmartTableDefaults
   /** 当前受控排序态(sorter 列箭头回显);getter 保证 computed 内追踪。 */
   sortState?: () => { field: string; order: 'ascend' | 'descend' } | null
+  /** 当前过滤项;有 def 的列表头会挂过滤入口。getter 保证 computed 内追踪。 */
+  filterDefs?: () => FilterDef<T>[]
+  /** 渲染表头过滤入口(由 SmartTable 提供,useColumns 不直接依赖 SFC)。 */
+  renderFilter?: (def: FilterDef<T>) => VNodeChild
+  /** 表级列宽拖拽开关;列上显式 resizable 优先。 */
+  resizable?: () => boolean
 }
 
 export interface UseColumnsReturn<T> {
@@ -107,6 +231,14 @@ export interface UseColumnsReturn<T> {
   moveCheck: (from: number, to: number) => void
   setFixed: (key: string, fixed?: 'left' | 'right') => void
   resetSettings: () => void
+  /** 列 key → 拖拽后的宽度(px)。 */
+  widths: Ref<Record<string, number>>
+  /** 记录拖拽宽度(写 localStorage 做了防抖,高频 mousemove 不会打爆存储)。 */
+  setWidth: (key: string, width: number) => void
+  /** 把还没有显式宽度的可见列钉成当前实际渲染宽度(拖拽开始时调用)。 */
+  freezeWidths: (measure: (key: string) => number | undefined) => void
+  /** 是否已进入「列宽钉住」态(拖过一次列宽之后)。 */
+  pinned: ComputedRef<boolean>
   naiveColumns: ComputedRef<DataTableColumn<T>[]>
   scrollX: ComputedRef<number>
 }
@@ -117,6 +249,7 @@ export function useColumns<T>(opts: UseColumnsOpts<T>): UseColumnsReturn<T> {
   // 用户改过的列状态(可能落后于最新列声明,effectiveChecks 里始终重新 merge)
   const checks = ref<DeclaredCol[]>(stored?.cols ?? [])
   const density = ref<Density>(stored?.density ?? opts.defaultDensity)
+  const widths = ref<Record<string, number>>({ ...stored?.widths })
 
   const dataCols = computed(() =>
     opts.columns().filter((c): c is SmartTableDataColumn<T> => !isSpecialColumn(c) && !c.hideInTable),
@@ -135,14 +268,50 @@ export function useColumns<T>(opts: UseColumnsOpts<T>): UseColumnsReturn<T> {
   // 声明与存储/用户态的合并结果 —— 列增删后依然一致
   const effectiveChecks = computed(() => mergeCols(declaredChecks.value, checks.value))
 
+  /**
+   * 「列宽钉住」态:拖过一次之后每列都有确定宽度,表格随之切到 table-layout:fixed
+   * 且宽度写死成列宽之和(见 SmartTable)。此态下每一列都必须给得出具体宽度。
+   */
+  const pinned = computed(() => Object.keys(widths.value).length > 0)
+
+  /**
+   * 叶子数据列的最终宽度。toNaive 与 scrollX 共用这一套口径 —— 两者一旦对不上,
+   * 差额就会被表格摊回各列,拖一列左侧的列跟着动。
+   */
+  function leafWidth(col: SmartTableDataColumn<T>, fixed?: 'left' | 'right'): number | undefined {
+    const w = widths.value[col.key]
+    if (w !== undefined) return w
+    if (col.width !== undefined) return Number(col.width)
+    // 固定列必须有具体宽度(否则 Naive 固定列错位);钉住态下所有列同理
+    if (fixed || pinned.value) return Number(col.minWidth ?? d.fixedFallbackWidth)
+    return undefined
+  }
+
+  /** 特殊列(序号/勾选/展开)的最终宽度,同样两处共用。 */
+  function specialWidth(col: SmartTableSpecialColumn<T>): number {
+    return Number(widths.value[specialColumnKey(col)] ?? col.width ?? d.indexWidth)
+  }
+
   function persist(next: DeclaredCol[]) {
     checks.value = next
-    if (opts.storageKey) saveState(opts.storageKey, density.value, next)
+    if (opts.storageKey) saveState(opts.storageKey, density.value, next, widths.value)
   }
 
   function setDensity(d: Density) {
     density.value = d
-    if (opts.storageKey) saveState(opts.storageKey, d, effectiveChecks.value)
+    if (opts.storageKey) saveState(opts.storageKey, d, effectiveChecks.value, widths.value)
+  }
+
+  // 列宽拖拽期间 mousemove 每帧都回调,localStorage 写入必须防抖(内存态仍即时更新)
+  let persistWidthTimer: ReturnType<typeof setTimeout> | undefined
+  function setWidth(key: string, width: number) {
+    if (widths.value[key] === width) return
+    widths.value = { ...widths.value, [key]: width }
+    if (!opts.storageKey) return
+    clearTimeout(persistWidthTimer)
+    persistWidthTimer = setTimeout(() => {
+      saveState(opts.storageKey!, density.value, effectiveChecks.value, widths.value)
+    }, 300)
   }
 
   function toggleShow(key: string, show: boolean) {
@@ -161,8 +330,52 @@ export function useColumns<T>(opts: UseColumnsOpts<T>): UseColumnsReturn<T> {
     persist(effectiveChecks.value.map((c) => (c.key === key ? { ...c, fixed } : c)))
   }
 
+  /**
+   * 列宽拖拽开始前,把所有可见叶子列钉成「当前实际渲染宽度」。
+   *
+   * 为什么必须做:表格是 table-layout:fixed + width:100%,声明宽度之和小于容器时,
+   * 浏览器会把富余宽度按比例摊给每一列 —— 实际渲染宽度因此大于声明宽度。
+   * Naive 拖拽时以「实际宽度 + 位移」为新宽度,却把该列钉死成这个值、其余列继续摊,
+   * 于是一拖就跳、手柄跟不上鼠标。先全部钉成实际宽度,声明之和 == 容器宽度,
+   * 摊派消失,之后每一像素位移都 1:1 落到列宽上。
+   */
+  function freezeWidths(measure: (key: string) => number | undefined) {
+    const next = { ...widths.value }
+    let changed = false
+    // 多级表头:宽度挂在叶子列上,和 scrollX 的口径保持一致
+    const walk = (cols: SmartTableDataColumn<T>[]) => {
+      for (const col of cols) {
+        if (col.children?.length) {
+          walk(col.children)
+          continue
+        }
+        if (next[col.key] !== undefined) continue
+        const w = measure(col.key)
+        if (typeof w === 'number' && w > 0) {
+          next[col.key] = Math.round(w)
+          changed = true
+        }
+      }
+    }
+    walk(orderedVisibleData.value.map((r) => r.col))
+    // 特殊列(序号/勾选/展开)同样要钉:漏掉哪怕一列,它的「实际宽 - 声明宽」
+    // 就是残余富余量,会继续摊给所有列 —— 表现就是拖一列、其余列跟着动。
+    for (const col of specialCols.value) {
+      const key = specialColumnKey(col)
+      if (next[key] !== undefined) continue
+      const w = measure(key)
+      if (typeof w === 'number' && w > 0) {
+        next[key] = Math.round(w)
+        changed = true
+      }
+    }
+    if (changed) widths.value = next
+  }
+
   function resetSettings() {
     checks.value = []
+    widths.value = {}
+    clearTimeout(persistWidthTimer)
     if (opts.storageKey) clearState(opts.storageKey)
   }
 
@@ -214,10 +427,29 @@ export function useColumns<T>(opts: UseColumnsOpts<T>): UseColumnsReturn<T> {
       return result as DataTableColumn<T>
     }
 
+    // 表头过滤入口:标题后挂漏斗。包一层是为了 sorter 列点漏斗不会连带触发排序
+    // (ColumnFilter 内部 stopPropagation),同时让漏斗贴着标题而不是被 th 撑开。
+    const filterDef = opts.filterDefs?.().find((f) => f.field === key)
+    if (filterDef && opts.renderFilter) {
+      const baseTitle = result.title as string | ((c: unknown) => VNodeChild) | undefined
+      result.title = (c: unknown) =>
+        h('span', { class: 'smart-table-th' }, [
+          typeof baseTitle === 'function' ? baseTitle(c) : baseTitle,
+          opts.renderFilter!(filterDef),
+        ])
+    }
+
+    // 列宽拖拽:列显式 resizable 优先于表级开关;拖过的宽度回填成 width,
+    // 刷新页面后(Naive 内部拖拽态已清空)仍由它还原。
+    const resizable = naiveRest.resizable ?? opts.resizable?.() ?? false
+    result.resizable = resizable
+    // 没有下限时能被拖成 0 宽,列头直接消失且拖不回来
+    if (resizable && result.minWidth === undefined) result.minWidth = d.resizeMinWidth
+
     const fixed = override && 'fixed' in override ? override.fixed : col.fixed
     result.fixed = fixed
-    // 固定列必须有具体宽度,否则 Naive 固定列错位
-    if (fixed && col.width === undefined) result.width = col.minWidth ?? d.fixedFallbackWidth
+    const width = leafWidth(col, fixed)
+    if (width !== undefined) result.width = width
 
     const slot = opts.slots[`cell-${key}`]
     if (render || slot || options || format) {
@@ -244,20 +476,31 @@ export function useColumns<T>(opts: UseColumnsOpts<T>): UseColumnsReturn<T> {
 
   function specialToNaive(col: SmartTableSpecialColumn<T>): DataTableColumn<T> {
     const { type, title, renderExpand, ...rest } = col
+    // 钉住的宽度优先于声明宽度(freezeWidths 之后每一列都有确定宽度,富余量为 0)
+    const width = specialWidth(col)
     if (type === 'index') {
       return {
         ...rest,
         key: '__index',
         title: (title ?? '#') as DataTableBaseColumn<T>['title'],
-        width: col.width ?? d.indexWidth,
+        width,
         align: (rest.align as 'left' | 'center' | 'right' | undefined) ?? d.align,
         render: (_row: T, rowIndex: number) => opts.indexOffset() + rowIndex + 1,
       } as DataTableColumn<T>
     }
+    // 勾选/展开列缺省由 Naive 自己定宽,只有钉住态才写死,免得平时改了它的默认观感
+    const pinnedWidth = pinned.value ? { width } : {}
+    // 显式给 key:Naive 内部的列宽拖拽回调(handleColumnResizeStart/handleColumnResize)
+    // 直接读 column.key,不会像 getColKey 那样替它们兜底成 __n_selection__/__n_expand__ ——
+    // 少这个 key,可拖拽的勾选/展开列一拖，onColumnResize 就因 key 是 undefined 而整段跳过。
+    const key = specialColumnKey(col)
+    // Naive 的 TableExpandColumn/TableSelectionColumn 类型声明里没有 key 字段(它按内部约定
+    // 自己认 __n_expand__/__n_selection__),但运行时的拖拽回调确实直接读 column.key ——
+    // 类型声明与运行时用法在这一点上不一致,只能整体转 unknown 再转回目标类型。
     if (type === 'expand') {
-      return { ...rest, type: 'expand', renderExpand } as DataTableColumn<T>
+      return { ...rest, key, type: 'expand', ...pinnedWidth, renderExpand } as unknown as DataTableColumn<T>
     }
-    return { ...rest, type: 'selection' } as DataTableColumn<T>
+    return { ...rest, key, type: 'selection', ...pinnedWidth } as unknown as DataTableColumn<T>
   }
 
   /** 最终列:特殊列(声明序,恒在前)+ 数据列(managed 按设置排序,hideInSetting 保持声明位)。 */
@@ -292,11 +535,12 @@ export function useColumns<T>(opts: UseColumnsOpts<T>): UseColumnsReturn<T> {
   /** auto scrollX = Σ可见叶子列 (width ?? minWidth ?? 兜底宽);特殊列缺省按 indexWidth。 */
   const scrollX = computed(() => {
     let sum = 0
-    for (const col of specialCols.value) sum += Number(col.width ?? d.indexWidth)
+    for (const col of specialCols.value) sum += specialWidth(col)
     const walk = (cols: SmartTableDataColumn<T>[]) => {
       for (const c of cols) {
         if (c.children?.length) walk(c.children)
-        else sum += Number(c.width ?? c.minWidth ?? d.fixedFallbackWidth)
+        // 未钉住且没写宽度的列,leafWidth 返回 undefined —— scroll-x 仍按兜底宽估算
+        else sum += leafWidth(c, c.fixed) ?? Number(c.minWidth ?? d.fixedFallbackWidth)
       }
     }
     walk(orderedVisibleData.value.map((r) => r.col))
@@ -311,6 +555,10 @@ export function useColumns<T>(opts: UseColumnsOpts<T>): UseColumnsReturn<T> {
     moveCheck,
     setFixed,
     resetSettings,
+    widths,
+    setWidth,
+    freezeWidths,
+    pinned,
     naiveColumns,
     scrollX,
   }

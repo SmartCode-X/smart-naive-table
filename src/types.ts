@@ -85,6 +85,75 @@ export interface SearchConfig {
   render?: (ctx: SearchRenderCtx) => VNodeChild
 }
 
+/* ======================== 过滤 ======================== */
+
+/** 条件动作(对齐 Bootstrap Blazor 的 FilterAction)。 */
+export type FilterAction = 'equal' | 'notEqual' | 'contains' | 'notContains' | 'gt' | 'gte' | 'lt' | 'lte'
+
+/** 同一列内多个条件的连接方式。 */
+export type FilterLogic = 'and' | 'or'
+
+export interface FilterCondition {
+  action: FilterAction
+  /** 值为空(null/''/[])的条件不参与求值。 */
+  value: unknown
+}
+
+/**
+ * 一列的过滤值;conditions 全空即未过滤。
+ * 内置面板只产出单条条件(condition 模式)或若干 equal 取「或」(options 模式),
+ * 但求值与序列化支持任意条数 —— 编程式 setFilter / defaultValue 可以给多条。
+ */
+export interface FilterValue {
+  logic: FilterLogic
+  conditions: FilterCondition[]
+}
+
+/** 全表过滤态:过滤键(filter.key ?? 列 key)→ 过滤值。 */
+export type FilterState = Record<string, FilterValue>
+
+/**
+ * 'options' —— Arco 风格,勾选候选项(内部等价于若干 equal 条件取「或」);
+ * 'condition' —— Blazor 风格,一行 [动作 + 值]。
+ */
+export type FilterMode = 'options' | 'condition'
+
+/** condition 模式下值控件的类型。 */
+export type FilterFieldType = 'input' | 'number' | 'select' | 'date'
+
+/** 自定义过滤面板的渲染上下文。 */
+export interface FilterRenderCtx {
+  /** 当前生效值(未过滤为 null)。 */
+  value: FilterValue | null
+  /** 提交;传 null 即清除该列过滤。 */
+  setValue: (v: FilterValue | null) => void
+  /** 关闭弹层。 */
+  close: () => void
+}
+
+export interface FilterConfig<T = any> {
+  /** 缺省:列或 filter 上有 options → 'options',否则 'condition'。 */
+  mode?: FilterMode
+  /** 过滤参数名 / 过滤态的键,默认列 key。 */
+  key?: string
+  /** options 模式的候选项;缺省复用列上的 options 字典。 */
+  options?: OptionsSource
+  /** options 模式是否多选,默认 true。 */
+  multiple?: boolean
+  /** condition 模式的值控件;缺省由列 format 推断(date/datetime → date,money → number)。 */
+  type?: FilterFieldType
+  /** condition 模式可选的动作;缺省按 type 给一组合理默认。 */
+  actions?: FilterAction[]
+  /** 初始过滤值,也是面板里「重置」恢复的目标。 */
+  defaultValue?: FilterValue | null
+  /** 透传 condition 模式的值控件 / options 模式的 NSelect 风格控件。 */
+  props?: Record<string, unknown>
+  /** 自定义整个过滤面板,优先于 mode。 */
+  render?: (ctx: FilterRenderCtx) => VNodeChild
+  /** 静态 data 模式下自定义匹配;缺省用内置条件求值。远程模式无效。 */
+  filter?: (value: FilterValue, row: T) => boolean
+}
+
 /* ======================== 列 ======================== */
 
 /**
@@ -92,7 +161,9 @@ export interface SearchConfig {
  * ellipsis/sorter...)原样透传给 n-data-table。
  */
 export interface SmartTableDataColumn<T = any>
-  extends Partial<Omit<DataTableBaseColumn<T>, 'key' | 'title' | 'render' | 'children'>> {
+  // 'filter' 被本包接管(FilterConfig,比 Naive 原生列过滤多条件行与远程联动),
+  // 因此不从 Naive 列继承同名属性。
+  extends Partial<Omit<DataTableBaseColumn<T>, 'key' | 'title' | 'render' | 'children' | 'filter'>> {
   /** 数据字段名;同时是搜索参数默认键、列设置持久化 id、动态插槽名。 */
   key: string
   /** 函数形式在表格渲染期求值 —— 切换语言自动生效。 */
@@ -113,6 +184,8 @@ export interface SmartTableDataColumn<T = any>
   hideInSetting?: boolean
   /** 搜索项配置;true = 全默认(input / 有 options 则 select)。 */
   search?: boolean | SearchConfig
+  /** 表头过滤;true = 全默认(有 options 则勾选列表,否则条件行)。 */
+  filter?: boolean | FilterConfig<T>
   /** 多级表头(Naive 原生名,子列同样支持 pro 字段)。 */
   children?: SmartTableDataColumn<T>[]
 }
@@ -173,6 +246,8 @@ export interface SmartTableProps<T = any> {
   pagination?: false | Partial<PaginationProps>
   /** false 隐藏搜索表单(即使列声明了 search)。 */
   search?: false | SearchFormConfig
+  /** false 关掉全部表头过滤(即使列声明了 filter);缺省跟随全局 filterable。 */
+  filter?: boolean
   /** false 隐藏右侧工具按钮。 */
   toolbar?: false | ToolbarConfig
   /** 表格卡片标题(也可用 #title 插槽)。 */
@@ -184,6 +259,10 @@ export interface SmartTableProps<T = any> {
   labels?: Partial<SmartTableLabels>
   /** 命中行加 .smart-table-row--active 高亮(用 rowKey 比对);配合 @row-click 做主从选中。 */
   activeRowKey?: string | number | null
+  /** 所有数据列可拖拽调整列宽;列上写 resizable 可单独覆盖。配合 storageKey 记住宽度。 */
+  resizable?: boolean
+  /** 过滤态 → 请求参数的序列化;缺省产出 `{ filters: [{ field, logic, conditions }] }`。 */
+  filterSerializer?: (state: FilterState) => Record<string, any>
 }
 
 /* ======================== 实例(模板 ref) ======================== */
@@ -202,6 +281,14 @@ export interface SmartTableInst<T = any> {
   pagination: { page: number; pageSize: number; itemCount: number }
   /** 重新加载异步字典;缺省全部,传列 key 只刷一个。 */
   reloadOptions: (key?: string) => Promise<void>
+  /** 当前过滤态(只读快照,改动请用 setFilter)。 */
+  filters: Ref<FilterState>
+  /** 编程式设置某列过滤;传 null 清除该列。远程模式会回第 1 页重查。 */
+  setFilter: (key: string, value: FilterValue | null) => void
+  /** 清空全部过滤(恢复各列 defaultValue)。 */
+  clearFilters: () => void
+  /** 当前各列被拖拽后的宽度(未拖过的列不在表里)。 */
+  columnWidths: Ref<Record<string, number>>
   /** Naive 原生实例(scrollTo / sort 等)。 */
   tableRef: Ref<DataTableInst | null>
 }
@@ -285,14 +372,30 @@ export interface SmartTableLabels {
   /** 搜索折叠:展开 / 收起。 */
   expand: string
   collapse: string
+  /* ---- 表头过滤 ---- */
+  filter: string
+  filterConfirm: string
+  filterReset: string
+  filterSelectAll: string
+  /** 条件动作文案。 */
+  filterEqual: string
+  filterNotEqual: string
+  filterContains: string
+  filterNotContains: string
+  filterGt: string
+  filterGte: string
+  filterLt: string
+  filterLte: string
 }
 
 /* ======================== 持久化存储结构 ======================== */
 
 export interface StoredTableState {
-  /** 结构版本;不匹配则整体丢弃回退声明态。 */
-  v: 1
+  /** 结构版本;v1(无 widths)自动升级,更高/更低的未知版本整体丢弃回退声明态。 */
+  v: 2
   density: Density
   /** 数组顺序即列顺序。 */
   cols: { key: string; show: boolean; fixed?: 'left' | 'right' }[]
+  /** 列 key → 拖拽后的列宽(px);未拖过的列不在表里。 */
+  widths: Record<string, number>
 }

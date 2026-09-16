@@ -1,11 +1,13 @@
 <script setup lang="ts" generic="T">
 // 唯一胶水层:useSmartTable(数据)+ useOptions(字典)+ useColumns(列/设置)组装。
 // props 用运行时声明 + PropType:泛型 + 复杂导入类型下比纯类型声明稳。
-import { computed, toValue, useAttrs, useSlots, watch, type PropType, type Slots } from 'vue'
+import { computed, h, onBeforeUnmount, toValue, useAttrs, useSlots, watch, type PropType, type Slots } from 'vue'
 import { NCard, NDataTable } from 'naive-ui'
 import type { DataTableInst, PaginationInfo, PaginationProps } from 'naive-ui'
 import type {
   Density,
+  FilterState,
+  FilterValue,
   SmartTableColumn,
   SmartTableDataColumn,
   SmartTableFetcher,
@@ -16,16 +18,21 @@ import type {
 import { cleanParams, useSmartTable } from './useSmartTable'
 import { useOptions } from './useOptions'
 import {
+  deriveFilterDefs,
   deriveInitParams,
   deriveOptionsSources,
   deriveSearchDefs,
   useColumns,
+  type FilterDef,
 } from './useColumns'
+import { applyFilters } from './filter'
+import { useFilters } from './useFilters'
 import { mergeLabels } from './labels'
 import { useSmartTableDefaults } from './config'
 import SearchForm from './SearchForm.vue'
 import Toolbar from './Toolbar.vue'
 import ColumnSettings from './ColumnSettings.vue'
+import ColumnFilter from './ColumnFilter.vue'
 import { ref } from 'vue'
 import { useRowDrag } from './useRowDrag'
 
@@ -41,6 +48,7 @@ const props = defineProps({
   defaultPageSize: { type: Number, default: 10 },
   pagination: { type: [Boolean, Object] as PropType<false | Partial<PaginationProps>>, default: undefined },
   search: { type: [Boolean, Object] as PropType<false | SearchFormConfig>, default: undefined },
+  filter: { type: Boolean, default: undefined },
   toolbar: { type: [Boolean, Object] as PropType<false | ToolbarConfig>, default: undefined },
   title: { type: String, default: undefined },
   storageKey: { type: String, default: undefined },
@@ -49,6 +57,11 @@ const props = defineProps({
   activeRowKey: { type: [String, Number] as PropType<string | number | null>, default: undefined },
   rowDraggable: { type: Boolean, default: false },
   dragHandle: { type: String, default: undefined },
+  resizable: { type: Boolean, default: undefined },
+  filterSerializer: {
+    type: Function as PropType<(state: FilterState) => Record<string, any>>,
+    default: undefined,
+  },
 })
 
 const emit = defineEmits<{
@@ -58,6 +71,10 @@ const emit = defineEmits<{
   error: [err: unknown]
   rowClick: [row: T, index: number]
   rowDragSort: [e: { from: number; to: number; reordered: T[] }]
+  /** 某列过滤变化;key 为过滤键(clearFilters 时为空串),state 是变更后的全表过滤态。 */
+  filterChange: [key: string, value: FilterValue | null, state: FilterState]
+  /** 拖拽调整列宽(拖动过程中持续触发,与 Arco 的 column-resize 一致)。 */
+  columnResize: [key: string, width: number]
 }>()
 
 // 仅声明插槽类型(对外):cell-* / header-* 是按列 key 动态读取的,模板里没有对应 <slot>,
@@ -100,12 +117,34 @@ function sortToParams(): Record<string, string> {
   return s ? { sortField: s.field, sortOrder: s.order === 'ascend' ? 'asc' : 'desc' } : {}
 }
 
+/* ---- 表头过滤 ---- */
+
+// 表级开关(实例 prop > 全局默认):关掉后列上的 filter 声明一并失效 ——
+// 没有漏斗、不参与本地过滤、也不进请求参数。与 :search="false" 同一套语义。
+const filterEnabled = computed(() => props.filter ?? defaults.filterable)
+
+const filterDefs = computed(() => (filterEnabled.value ? deriveFilterDefs(props.columns) : []))
+
+const filters = useFilters<T>({
+  defs: () => filterDefs.value,
+  onChange: (key, value, state) => {
+    // 过滤条件变了,当前页码大概率已越界 —— 与搜索一致回第 1 页
+    if (isRemote.value) void table.search()
+    emit('filterChange', key, value, state)
+  },
+})
+
+/** 远程模式下过滤态 → 请求参数;实例 prop 的序列化器优先于全局默认。 */
+function filterToParams(): Record<string, any> {
+  return (props.filterSerializer ?? defaults.filterSerializer)(filters.state.value)
+}
+
 const table = useSmartTable<T>(
   // 包一层保证始终取最新的 props.fetcher(模板内联箭头每次渲染都是新引用)
   (p) => props.fetcher!(p),
   {
     initParams: deriveInitParams(searchDefs.value),
-    extraParams: () => ({ ...(props.params ?? {}), ...sortToParams() }),
+    extraParams: () => ({ ...(props.params ?? {}), ...sortToParams(), ...filterToParams() }),
     immediate: isRemote.value && props.immediate,
     defaultPageSize: props.defaultPageSize,
     onError: (e) => emit('error', e),
@@ -147,6 +186,9 @@ const columnsApi = useColumns<T>({
   indexOffset: () => (isRemote.value ? (pagination.page - 1) * pagination.pageSize : 0),
   defaults,
   sortState: () => sortState.value,
+  filterDefs: () => filterDefs.value,
+  renderFilter: renderColumnFilter,
+  resizable: () => props.resizable ?? defaults.resizable,
 })
 
 // Naive @update:sorter → 更新受控排序态 + 远程重查(回第 1 页)。宿主若另挂 handler 也转发。
@@ -158,9 +200,102 @@ function onSorterChange(s: unknown) {
   if (typeof hostHandler === 'function') (hostHandler as (v: unknown) => void)(s)
 }
 
+/**
+ * 表头漏斗:由 useColumns 在列标题后调用。放在这里而不是 useColumns 内,
+ * 是为了让 useColumns 保持纯 TS(不 import SFC),node 环境下仍可直接单测。
+ */
+function renderColumnFilter(def: FilterDef<T>) {
+  return h(ColumnFilter, {
+    key: def.key,
+    def: def as FilterDef,
+    value: filters.getFilter(def.key),
+    labels: mergedLabels.value,
+    getOptions: options.getOptions,
+    isLoadingOptions: options.isLoading,
+    dateValueFormat: defaults.dateValueFormat,
+    'onUpdate:value': (v: FilterValue | null) => filters.setFilter(def.key, v),
+  })
+}
+
+/**
+ * Naive 的列宽拖拽只存在组件内部,不对外抛事件;onUnstableColumnResize 是唯一出口,
+ * 接住它才能把宽度持久化 + 转成 @column-resize。拖动过程中每帧触发,
+ * localStorage 写入在 useColumns.setWidth 里防抖。
+ *
+ * 首帧先 freezeWidths:把所有列钉成当前实际宽度,消掉 table-layout:fixed 的宽度摊派,
+ * 否则一拖就跳、列宽涨得比鼠标位移多得多(详见 useColumns.freezeWidths 注释)。
+ * 此处拿到的 getColumnWidth 读的是 DOM 实测宽,且本回调在 Naive 写入新宽度之前执行,
+ * 量到的正是拖拽前的布局。
+ */
+let resizingKey: string | null = null
+let pendingWidth = 0
+
+/** 松手才把宽度落进列定义(整个手势只重建一次列),并清掉临时增量。 */
+function endResize() {
+  if (resizingKey !== null) {
+    const key = resizingKey
+    const width = pendingWidth
+    resizingKey = null
+    dragDelta.value = 0
+    columnsApi.setWidth(key, width)
+  }
+}
+
+function onColumnResize(resizedWidth: number, limitedWidth: number, column: unknown, getColumnWidth: unknown) {
+  const key = (column as { key?: string | number })?.key
+  if (key !== undefined) {
+    const colKey = String(key)
+    if (resizingKey !== colKey) {
+      // 换了一列(或新手势):先把上一列的结果落账,再钉住当前布局
+      endResize()
+      resizingKey = colKey
+      columnsApi.freezeWidths(getColumnWidth as (k: string) => number | undefined)
+      window.addEventListener('mouseup', endResize, { once: true })
+    }
+    pendingWidth = limitedWidth
+    // 拖拽期间列宽由 Naive 内部的拖拽态渲染,我们只负责让表格总宽跟上
+    dragDelta.value = limitedWidth - (columnsApi.widths.value[colKey] ?? limitedWidth)
+    emit('columnResize', colKey, limitedWidth)
+  }
+  const hostHandler = attrs.onUnstableColumnResize ?? attrs['on-unstable-column-resize']
+  if (typeof hostHandler === 'function') {
+    ;(hostHandler as (...a: unknown[]) => void)(resizedWidth, limitedWidth, column, getColumnWidth)
+  }
+}
+
+/**
+ * 透传给 n-data-table 的 attrs,剔除 on(-)unstable-column-resize。
+ *
+ * 模板里 `v-bind="attrs"` 之后又显式绑定了 `:on-unstable-column-resize="onColumnResize"`——
+ * 这个 key 命中 Vue 的 isOn() 判定,同名时 mergeProps 会把两个函数合并成数组而不是后者覆盖前者
+ * (class/style/on* 是 mergeProps 里唯一「合并」而非「覆盖」的特例)。宿主若也写了同名 attr,
+ * 数组传给 Naive 就会在它当函数调用时直接抛 TypeError。宿主处理函数已经在 onColumnResize 里
+ * 从 attrs 读出来手动转发了,这里只需要把它从透传对象里摘掉,避免它再从 v-bind 混进去参与合并。
+ */
+const forwardedAttrs = computed(() => {
+  const rest = { ...attrs } as Record<string, unknown>
+  delete rest.onUnstableColumnResize
+  delete rest['on-unstable-column-resize']
+  return rest
+})
+
 /* ---- 组装 ---- */
 
 const tableRef = ref<DataTableInst | null>(null)
+
+// Naive 把拖拽后的列宽存在 NDataTable 内部,且既不抛事件也不在实例上给清除入口,
+// 它还盖过我们回填的 column.width。所以「恢复默认」若真清掉过宽度,只能重挂一次表格。
+const tableKey = ref(0)
+function onResetSettings() {
+  const hadWidths = Object.keys(columnsApi.widths.value).length > 0
+  columnsApi.resetSettings()
+  if (hadWidths) tableKey.value++
+}
+
+onBeforeUnmount(() => {
+  window.removeEventListener('mouseup', endResize)
+  resizingKey = null
+})
 
 const rowKeyFn = computed(() => {
   const rk = props.rowKey
@@ -169,8 +304,13 @@ const rowKeyFn = computed(() => {
 
 const tableSize = computed(() => (columnsApi.density.value === 'compact' ? 'small' : 'medium'))
 
-// NDataTable 的 data 形参是 RowData[](Record 索引),泛型 T 无索引签名,此处收窄
-const tableData = computed(() => (isRemote.value ? rows.value : (props.data ?? [])) as Record<string, any>[])
+// NDataTable 的 data 形参是 RowData[](Record 索引),泛型 T 无索引签名,此处收窄。
+// 静态模式的过滤在这里落地(远程模式走 fetcher 参数,由后端过滤)。
+const tableData = computed(() => {
+  if (isRemote.value) return rows.value as Record<string, any>[]
+  const local = props.data ?? []
+  return applyFilters(local, filterDefs.value, filters.state.value) as Record<string, any>[]
+})
 
 const searchConfig = computed<SearchFormConfig>(() => {
   const user = typeof props.search === 'object' ? props.search : {}
@@ -210,9 +350,42 @@ const mergedPagination = computed<false | PaginationProps>(() => {
   return { ...base, defaultPageSize: props.defaultPageSize, ...user }
 })
 
-// 消费者显式传 scroll-x 时让位(v-bind 顺序也保证其覆盖)
+/**
+ * 「列宽已钉住」态:拖过一次之后,每一列(含序号/勾选列)都有确定宽度。
+ * 此时必须同时做两件事,否则拖一列会牵动其它列:
+ *  1. table-layout 切 fixed —— Naive 默认是 auto,auto 下 <col> 宽度只是建议值,
+ *     浏览器每次都按内容重新求解整张表,改一列所有列都会挪。
+ *  2. 表格宽度写死成各列之和(而不是 CSS 里的 width:100%)—— 否则收窄某列腾出的
+ *     富余宽度会被摊回其余列,左侧的列跟着变宽。
+ */
+const colsPinned = columnsApi.pinned
+
+// 宿主显式传了 table-layout 就听宿主的
+const mergedTableLayout = computed<'auto' | 'fixed' | undefined>(() => {
+  const host = (attrs.tableLayout ?? attrs['table-layout']) as 'auto' | 'fixed' | undefined
+  if (host) return host
+  return colsPinned.value ? 'fixed' : undefined
+})
+
+/**
+ * 拖拽过程中的临时增量。表格总宽必须跟着鼠标走(否则被拖的列变宽、总宽没变,
+ * 富余量就会从别的列身上找补),但列定义不能每帧重建 —— 那会让整张表每帧重新求解布局,
+ * 表现就是左侧的列跟着一起动。所以这里只让一个 CSS 变量随帧变化,列数组保持不变。
+ */
+const dragDelta = ref(0)
+
+/** 表格总宽 = 各列宽度之和(+ 拖拽中的临时增量)。scroll-x 与 CSS 变量共用,两者必须一致。 */
+const colsWidth = computed(() => columnsApi.scrollX.value + dragDelta.value)
+
+const rootStyle = computed(() => ({
+  '--smart-table-active-row-bg': defaults.activeRowBg,
+  ...(colsPinned.value ? { '--smart-table-cols-width': `${colsWidth.value}px` } : {}),
+}))
+
+// 消费者显式传 scroll-x 时让位(v-bind 顺序也保证其覆盖)。
+// 用 colsWidth 而非 scrollX:拖拽期间外层滚动容器的 min-width 要和表格总宽同步,否则表格溢出容器。
 const autoScrollX = computed(() =>
-  'scrollX' in attrs || 'scroll-x' in attrs ? undefined : columnsApi.scrollX.value,
+  'scrollX' in attrs || 'scroll-x' in attrs ? undefined : colsWidth.value,
 )
 
 // 行 props:合并宿主经 attrs 传入的 row-props + 内置高亮(activeRowKey)与行点击(@row-click)。
@@ -271,12 +444,16 @@ defineExpose({
   params,
   pagination,
   reloadOptions: options.reload,
+  filters: filters.state,
+  setFilter: filters.setFilter,
+  clearFilters: filters.clearFilters,
+  columnWidths: columnsApi.widths,
   tableRef,
 })
 </script>
 
 <template>
-  <div ref="rootRef" class="smart-table" :style="{ '--smart-table-active-row-bg': defaults.activeRowBg }">
+  <div ref="rootRef" class="smart-table" :class="{ 'smart-table--pinned-cols': colsPinned }" :style="rootStyle">
     <SearchForm
       v-if="props.search !== false && searchDefs.length > 0"
       :fields="searchDefs"
@@ -311,12 +488,15 @@ defineExpose({
             @toggle="columnsApi.toggleShow"
             @move="columnsApi.moveCheck"
             @set-fixed="columnsApi.setFixed"
-            @reset="columnsApi.resetSettings"
+            @reset="onResetSettings"
           />
         </template>
       </Toolbar>
 
+      <!-- single-line:false = 单元格竖线。Naive 的 bordered 只画外框,格子线归 single-line 管。
+           绑在 v-bind="attrs" 前,宿主写 :single-line="true" 可覆盖回单线样式。 -->
       <n-data-table
+        :key="tableKey"
         ref="tableRef"
         :remote="isRemote"
         :columns="columnsApi.naiveColumns.value"
@@ -326,8 +506,11 @@ defineExpose({
         :pagination="mergedPagination"
         :size="tableSize"
         :scroll-x="autoScrollX"
-        v-bind="attrs"
+        :single-line="false"
+        v-bind="forwardedAttrs"
         :row-props="mergedRowProps"
+        :table-layout="mergedTableLayout"
+        :on-unstable-column-resize="onColumnResize"
         @update:sorter="onSorterChange"
       >
         <template v-if="slots.empty" #empty><slot name="empty" /></template>
@@ -341,6 +524,41 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+/* 列宽钉住后,表格宽度 = 各列宽度之和(Naive 基础样式是 width:100%)。
+   不改的话收窄某列腾出的富余宽度会被摊回其余列,拖一列左侧的列跟着动。
+   宽度小于容器时表格右侧留白 —— 这正是「只改右边、左侧不动」的效果。 */
+.smart-table--pinned-cols :deep(.n-data-table-table) {
+  width: var(--smart-table-cols-width);
+}
+/* 列宽拖拽手柄归位。Naive 默认把它放偏了:命中区 right 是 container-size/2,
+   可见竖线在命中区内又 left 了 container-size/2,两次叠加 —— 那根线落在列边界左侧
+   整整一个 container-size(8px)处,且只有半格高,跟列分隔线对不上。
+   这里把命中区贴到列右边缘、竖线拉满整格,与 th 的 border-right 重合。 */
+.smart-table :deep(.n-data-table-resize-button) {
+  right: 0;
+}
+.smart-table :deep(.n-data-table-resize-button::after) {
+  top: 0;
+  bottom: 0;
+  left: auto;
+  right: 0;
+  height: auto;
+  transform: none;
+  /* 静止时不画:表格自己有 border-right(single-line=false)时会叠成一条粗线。
+     分隔线交给表格,手柄只在悬停/拖拽时显形 —— 与 Arco 一致。 */
+  background-color: transparent;
+}
+.smart-table :deep(.n-data-table-resize-button:hover::after),
+.smart-table :deep(.n-data-table-resize-button--active::after) {
+  background-color: var(--n-th-icon-color-active);
+}
+/* 表头「标题 + 漏斗」容器:在 Naive 内层 th 里渲染,所以要 :deep 才打得进去。 */
+.smart-table :deep(.smart-table-th) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
 }
 /* activeRowKey 命中行高亮:背景走 --smart-table-active-row-bg,宿主/主题可覆盖。
    :deep 打进内层 n-data-table 的 td —— 包内处理,消费端不必自己写 :deep。 */

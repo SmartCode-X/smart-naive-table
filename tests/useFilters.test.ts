@@ -1,0 +1,171 @@
+import { describe, expect, it, vi } from 'vitest'
+import { nextTick, ref } from 'vue'
+import { deriveFilterDefs, deriveInitFilters } from '../src/useColumns'
+import { useFilters } from '../src/useFilters'
+import type { FilterValue, SmartTableColumn } from '../src/types'
+
+interface Row {
+  name: string
+  status: number
+  createTime: string
+  salary: number
+}
+
+const v = (value: unknown): FilterValue => ({ logic: 'and', conditions: [{ action: 'equal', value }] })
+
+describe('deriveFilterDefs', () => {
+  it('缺省按有无字典推断 mode,按 format 推断 condition 的值控件', () => {
+    const cols: SmartTableColumn<Row>[] = [
+      { key: 'name', title: 'N', filter: true },
+      { key: 'status', title: 'S', options: [{ label: 'A', value: 1 }], filter: true },
+      { key: 'createTime', title: 'C', format: 'datetime', filter: true },
+      { key: 'salary', title: 'M', format: 'money', filter: true },
+    ]
+    const defs = deriveFilterDefs(cols)
+    expect(defs.map((d) => [d.key, d.mode, d.type])).toEqual([
+      ['name', 'condition', 'input'],
+      ['status', 'options', 'select'],
+      ['createTime', 'condition', 'date'],
+      ['salary', 'condition', 'number'],
+    ])
+  })
+
+  it('默认动作按值类型给,显式 actions 优先', () => {
+    const [text, num] = deriveFilterDefs<Row>(
+      [
+        { key: 'name', filter: true },
+        { key: 'salary', format: 'money', filter: { actions: ['gt'] } },
+      ],
+    )
+    expect(text.actions).toEqual(['contains', 'notContains', 'equal', 'notEqual'])
+    expect(num.actions).toEqual(['gt'])
+  })
+
+  it('跳过特殊列、无 filter 的列,以及只作搜索项的 hideInTable 列', () => {
+    const defs = deriveFilterDefs<Row>(
+      [
+        { type: 'index' },
+        { key: 'name' },
+        { key: 'status', filter: true, hideInTable: true },
+        { key: 'salary', filter: true },
+      ],
+    )
+    expect(defs.map((d) => d.key)).toEqual(['salary'])
+  })
+
+  it('filter.key 覆写过滤键,field 仍是列 key;filter.options 用独立字典键', () => {
+    const [def] = deriveFilterDefs<Row>(
+      [{ key: 'status', options: [{ label: 'A', value: 1 }], filter: { key: 'st', options: [{ label: 'B', value: 2 }] } }],
+    )
+    expect(def.key).toBe('st')
+    expect(def.field).toBe('status')
+    expect(def.optionsKey).toBe('__filter:status')
+  })
+
+  it('deriveInitFilters 只播种有 defaultValue 的列', () => {
+    const defs = deriveFilterDefs<Row>(
+      [
+        { key: 'name', filter: true },
+        { key: 'status', filter: { defaultValue: v(1) } },
+      ],
+    )
+    expect(deriveInitFilters(defs)).toEqual({ status: v(1) })
+  })
+
+  it('deriveInitFilters 跳过条件全空的「不生效」defaultValue,与 useFilters 的补种口径一致', () => {
+    const inert: FilterValue = { logic: 'and', conditions: [{ action: 'gt', value: null }] }
+    const defs = deriveFilterDefs<Row>([{ key: 'salary', filter: { defaultValue: inert } }])
+    expect(deriveInitFilters(defs)).toEqual({})
+  })
+
+  it('多级表头(children)里的列同样能声明 filter,与 resizable 的递归口径一致', () => {
+    const defs = deriveFilterDefs<Row>([
+      {
+        key: 'contact',
+        title: 'Contact',
+        children: [
+          { key: 'email', title: 'Email', filter: true },
+          { key: 'phone', title: 'Phone', resizable: true },
+        ],
+      } as SmartTableColumn<Row>,
+    ])
+    expect(defs.map((d) => d.key)).toEqual(['email'])
+  })
+
+  it('未显式声明 actions 时,各列拿到彼此独立的默认动作数组(共享同一个模块级数组会被外部 mutate 污染)', () => {
+    const [a, b] = deriveFilterDefs<Row>([
+      { key: 'name', filter: true },
+      { key: 'status', filter: true },
+    ])
+    a.actions.push('gt' as never)
+    expect(b.actions).not.toContain('gt')
+  })
+})
+
+describe('useFilters', () => {
+  function build(cols: SmartTableColumn<Row>[]) {
+    const columns = ref(cols)
+    const onChange = vi.fn()
+    const defs = () => deriveFilterDefs(columns.value)
+    return { columns, onChange, api: useFilters<Row>({ defs, onChange }) }
+  }
+
+  it('初始态来自各列 defaultValue', () => {
+    const { api } = build([
+      { key: 'name', filter: true },
+      { key: 'status', filter: { defaultValue: v(1) } },
+    ])
+    expect(api.state.value).toEqual({ status: v(1) })
+    expect(api.activeKeys.value).toEqual(['status'])
+  })
+
+  it('setFilter 写入生效值,传 null 或空条件则删键', () => {
+    const { api, onChange } = build([{ key: 'name', filter: true }])
+    api.setFilter('name', v('a'))
+    expect(api.state.value).toEqual({ name: v('a') })
+    expect(onChange).toHaveBeenLastCalledWith('name', v('a'), { name: v('a') })
+
+    api.setFilter('name', null)
+    expect(api.state.value).toEqual({})
+    expect(onChange).toHaveBeenLastCalledWith('name', null, {})
+
+    // 空条件等价于清除,不会留个空壳
+    api.setFilter('name', { logic: 'and', conditions: [{ action: 'equal', value: '' }] })
+    expect(api.state.value).toEqual({})
+  })
+
+  it('同值重复提交不再触发 onChange(面板点确定但没改动)', () => {
+    const { api, onChange } = build([{ key: 'name', filter: true }])
+    api.setFilter('name', v('a'))
+    expect(onChange).toHaveBeenCalledTimes(1)
+    api.setFilter('name', v('a'))
+    expect(onChange).toHaveBeenCalledTimes(1)
+    api.setFilter('name', null)
+    api.setFilter('name', null)
+    expect(onChange).toHaveBeenCalledTimes(2)
+  })
+
+  it('clearFilters 恢复各列 defaultValue', () => {
+    const { api, onChange } = build([
+      { key: 'name', filter: true },
+      { key: 'status', filter: { defaultValue: v(1) } },
+    ])
+    api.setFilter('name', v('a'))
+    api.setFilter('status', v(9))
+    api.clearFilters()
+    expect(api.state.value).toEqual({ status: v(1) })
+    expect(onChange).toHaveBeenLastCalledWith('', null, { status: v(1) })
+  })
+
+  it('列定义后追加的过滤列补种一次 defaultValue,用户清掉后不回填', async () => {
+    const { columns, api } = build([{ key: 'name', filter: true }])
+    columns.value = [...columns.value, { key: 'status', filter: { defaultValue: v(1) } }]
+    await nextTick()
+    expect(api.state.value).toEqual({ status: v(1) })
+
+    api.setFilter('status', null)
+    columns.value = [...columns.value]
+    await nextTick()
+    expect(api.state.value).toEqual({})
+  })
+})

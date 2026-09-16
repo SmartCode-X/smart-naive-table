@@ -29,6 +29,7 @@ Write `columns`, plug in a `fetcher` — the search form, pagination, dict trans
 - **Columns drive everything**: add `search` to a column and it becomes a search field; add `options` and it translates cells and feeds the select — one declaration, used everywhere
 - **One function for the backend**: `fetcher` receives `{ page, pageSize, ...filters }` and returns `{ items, total }`
 - **Toolbar out of the box**: refresh, density toggle, column settings (show / hide, drag to reorder, pin left / right), remembered per table
+- **Header filters + column resize**: add `filter` to a column for a funnel icon — a checkbox panel or an "action + value" condition panel; resized widths are remembered, and dragging one column moves only that column
 - **Follows your Naive theme**: light / dark and locale come from `<n-config-provider>`
 - **Details handled**: race-guarded requests, empty params stripped, fixed-column width fallback, deduped async dicts
 - **Lightweight**: the only runtime dependency is `sortablejs` (loaded only when row dragging is on); ESM with full TypeScript types
@@ -182,6 +183,88 @@ Open it from the rightmost toolbar icon: toggle visibility, drag to reorder, pin
 - When column definitions change, saved settings merge safely: removed columns are dropped, new ones are inserted at their declared position
 - `hide: true` starts hidden (can be re-enabled in the panel); `hideInSetting: true` keeps a column out of the panel
 
+### Header filters
+
+Add `filter` to a column and a funnel icon appears in its header. The panel comes in two shapes, picked per column:
+
+- **Checkbox panel** (the column has `options`): tick dict entries; with multi-select this is internally "several *equals* conditions joined by **or**"
+- **Condition panel** (no `options`): one "action + value" row. Actions default by value type (text gets *contains / not contains / equals / not equals*; numbers and dates get *equals / greater than / less than*, ...)
+
+```ts
+const columns: SmartTableColumn<Row>[] = [
+  // Has a dict -> checkbox panel; multiple: false makes it single-select
+  { key: 'status', title: 'Status', options: statusOptions, tag: true, filter: true },
+  // No dict -> condition panel, text defaults to contains / not contains / equals / not equals
+  { key: 'name', title: 'Name', filter: true },
+  // Number column: an initial value (also what "Reset" restores)
+  {
+    key: 'salary',
+    title: 'Salary',
+    format: 'money',
+    filter: { defaultValue: { logic: 'and', conditions: [{ action: 'gte', value: 10000 }] } },
+  },
+  // Date column: a date-only value compares by whole day, so "equals 2024-03-05" matches any time that day
+  { key: 'createTime', title: 'Created', format: 'datetime', filter: true },
+]
+```
+
+**Remote mode** (with `fetcher`) filters on the server: changing conditions goes back to page 1 and reloads. The default request shape is below — translate it into SQL / ORM conditions on your side:
+
+```jsonc
+{
+  "page": 1,
+  "pageSize": 10,
+  "filters": [
+    { "field": "name", "logic": "and", "conditions": [{ "action": "contains", "value": "ali" }] },
+    { "field": "status", "logic": "or", "conditions": [{ "action": "equal", "value": 1 }, { "action": "equal", "value": 2 }] }
+  ]
+}
+```
+
+If your backend expects a different shape, pass your own serializer (or set it once globally via `createSmartTableDefaults({ filterSerializer })`):
+
+```vue
+<SmartTable :columns="columns" :fetcher="fetchList" :filter-serializer="toMyBackendShape" />
+```
+
+**Static mode** (with `data`) filters on the client, no adapter code needed. For custom matching use `filter.filter`:
+
+```ts
+{ key: 'tags', title: 'Tags', filter: { filter: (value, row) => row.tags.some((t) => matchFilterValue(value, t)) } }
+```
+
+You can also replace the whole panel; `ctx` carries `value`, `setValue` and `close`:
+
+```ts
+{ key: 'deptId', title: 'Department', filter: { render: ({ value, setValue, close }) => h(MyPanel, { value, setValue, close }) } }
+```
+
+Filter state is readable and writable: `tableRef.filters`, `tableRef.setFilter(key, value)`, `tableRef.clearFilters()`, and changes emit `@filter-change`.
+
+To turn every filter off at once (same shape as `:search="false"`; column-level `filter` declarations stop taking effect too):
+
+```vue
+<SmartTable :columns="columns" :fetcher="fetchList" :filter="false" />
+```
+
+You can also disable them globally with `createSmartTableDefaults({ filterable: false })` and re-enable one table with `:filter="true"`.
+
+### Column resize
+
+Add `resizable` to the table and every data column can be dragged by its right header edge:
+
+```vue
+<SmartTable :columns="columns" :fetcher="fetchList" storage-key="staff" resizable @column-resize="onResize" />
+```
+
+- To opt a column out, set `resizable: false` on it (a column's own value always wins over the table-level switch)
+- With `storage-key`, widths are stored in localStorage next to the column settings and survive reloads
+- `@column-resize` (`key`, `width`) fires continuously while dragging; the localStorage write is debounced internally
+- **Dragging one column changes only that column**: the first drag pins every column (including index / selection) to its current rendered width and switches the table to `table-layout: fixed` with its width fixed to the sum of the columns. Columns to the left stay put; only the dragged one follows the cursor
+- Once widths are pinned the table no longer stretches to the container: narrowing a column leaves space on the right, widening adds horizontal scroll. "Restore defaults" in column settings brings back the auto-fit behavior
+- Columns can't be dragged to zero: resizable columns get a fallback `minWidth` (60 by default), and an explicit `minWidth` on the column wins
+- "Restore defaults" in column settings resets widths too
+
 ### More scenarios
 
 | Scenario | How |
@@ -194,7 +277,9 @@ Open it from the rightmost toolbar icon: toggle visibility, drag to reorder, pin
 | Multi-select | special column `{ type: 'selection' }` + `v-model:checked-row-keys` |
 | Master-detail highlight | `:active-row-key="currentId"` + `@row-click` |
 | Row drag-to-reorder | `row-draggable` + `@row-drag-sort`; the table reorders, you persist via your API |
-| Column resize | `resizable: true` on a column |
+| Column resize | `resizable` on the table, or `resizable: true` on a column |
+| Header filters | `filter: true` on a column; remote mode receives a `filters` param |
+| Cell grid lines | on by default (internal `single-line: false`); pass `:single-line="true"` for the single-line look |
 | Virtual scroll | `virtual-scroll` + `max-height` |
 | Summary row | `:summary="(pageData) => ..."` |
 | Other table props | put them on SmartTable; they are forwarded to `n-data-table` (e.g. `striped`, `bordered`) |
@@ -288,11 +373,14 @@ app.mount('#app')
 
 Data columns accept every Naive UI column prop (`width`, `minWidth`, `fixed`, `align`, `ellipsis`, `sorter`, `resizable`, ...), plus:
 
+> `filter` is owned by this package (it adds a condition panel and remote wiring on top of Naive's column filter), so Naive's native `filter` / `filterOptions` props are no longer forwarded.
+
 | Field | Type | Description |
 |---|---|---|
 | `key` | `string` | **Required**. Row field; also the search param name and slot name |
 | `title` | `string \| () => VNodeChild` | Column title; the function form follows locale switches |
 | `search` | `boolean \| SearchConfig` | Creates a search field; `true` = select if `options` exist, else input |
+| `filter` | `boolean \| FilterConfig` | Adds a header filter; `true` = checkbox panel if `options` exist, else condition panel |
 | `options` | `Option[] \| Ref<Option[]> \| () => Promise<Option[]>` | Dict: translates cells and feeds the search select |
 | `tag` | `boolean` | Render the translated value as an `NTag`, colored by the option's `tagType` |
 | `format` | `'date' \| 'datetime' \| 'money' \| (value, row) => string` | Display format |
@@ -319,6 +407,26 @@ Data columns accept every Naive UI column prop (`width`, `minWidth`, `fixed`, `a
 | `props` | `object` | Forwarded to the underlying Naive control |
 | `render` | `(ctx) => VNodeChild` | Fully custom control; `ctx` has `value`, `setValue`, `params`, `search` |
 
+### FilterConfig
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `mode` | `'options' \| 'condition'` | `'options'` if a dict exists | Panel shape: checkbox list / condition rows |
+| `key` | `string` | the column `key` | Filter param name (override when it differs from the displayed field) |
+| `options` | same as column `options` | reuses the column dict | Candidates used only by the filter |
+| `multiple` | `boolean` | `true` | Multi-select in the checkbox panel |
+| `type` | `'input' \| 'number' \| 'select' \| 'date'` | inferred from `format` | Value control in the condition panel |
+| `actions` | `FilterAction[]` | by `type` | Selectable actions, see below |
+| `defaultValue` | `FilterValue \| null` | `null` | Initial filter value, and what "Reset" restores |
+| `props` | `object` | — | Forwarded to the value control |
+| `render` | `(ctx) => VNodeChild` | — | Replace the whole panel; `ctx` has `value`, `setValue`, `close` |
+| `filter` | `(value, row) => boolean` | built-in evaluation | Custom matching in static `data` mode (ignored in remote mode) |
+
+- **FilterAction**: `'equal'`, `'notEqual'`, `'contains'`, `'notContains'`, `'gt'`, `'gte'`, `'lt'`, `'lte'`
+- **FilterValue**: `{ logic: 'and' | 'or', conditions: { action, value }[] }`; conditions whose value is empty (`null` / `''` / `[]`) are ignored, and an all-empty value means "not filtered"
+- Columns are always combined with **and**; `logic` only applies within one column
+- The built-in panel produces a single condition (condition mode) or several `equal`s joined by **or** (checkbox mode); multiple conditions only come from `defaultValue` or a programmatic `setFilter`, and both evaluation and serialization support them
+
 ### Props
 
 | Prop | Type | Default | Description |
@@ -332,6 +440,7 @@ Data columns accept every Naive UI column prop (`width`, `minWidth`, `fixed`, `a
 | `default-page-size` | `number` | `10` | Initial page size |
 | `pagination` | `false \| PaginationProps` | — | `false` hides pagination; an object merges over built-in settings |
 | `search` | `false \| SearchFormConfig` | — | Search area config (see below); `false` hides it |
+| `filter` | `boolean` | `true` | `false` turns off every header filter (even on columns declaring `filter`) |
 | `toolbar` | `false \| { refresh, density, columnSettings }` | all on | Toolbar button switches |
 | `title` | `string` | — | Table title, or use the `#title` slot |
 | `storage-key` | `string` | — | Persist column settings and density to localStorage |
@@ -339,6 +448,8 @@ Data columns accept every Naive UI column prop (`width`, `minWidth`, `fixed`, `a
 | `labels` | `Partial<SmartTableLabels>` | English | Override component text; pass a `computed` for locale switching |
 | `active-row-key` | `string \| number \| null` | — | Highlight the matching row |
 | `row-draggable` | `boolean` | `false` | Enable row drag-to-reorder |
+| `resizable` | `boolean` | `false` | Make all data columns resizable; a column's own `resizable` wins |
+| `filter-serializer` | `(state) => object` | see Header filters | Serializes filter state into request params |
 | `drag-handle` | `string` | — | CSS selector for the drag handle; whole row if omitted |
 
 Anything not listed (e.g. `striped`, `max-height`, `checked-row-keys`, `virtual-scroll`) is forwarded to `n-data-table`.
@@ -364,6 +475,8 @@ Anything not listed (e.g. `striped`, `max-height`, `checked-row-keys`, `virtual-
 | `error` | `err` | Request failed (the table shows no message; handle it yourself) |
 | `row-click` | `row, index` | Row clicked |
 | `row-drag-sort` | `{ from, to, reordered }` | Row drag finished |
+| `filter-change` | `key, value, state` | A header filter changed (`key` is `''` for `clearFilters`) |
+| `column-resize` | `key, width` | Column resized (fires continuously while dragging) |
 
 ### Slots
 
@@ -387,6 +500,10 @@ Anything not listed (e.g. `striped`, `max-height`, `checked-row-keys`, `virtual-
 | `reloadOptions(key?)` | Reload async dicts; all of them when `key` is omitted |
 | `loading` / `rows` / `pagination` | Loading state, current rows, pagination state |
 | `params` | Reactive search params, readable and writable |
+| `filters` | Current filter state (read-only snapshot) |
+| `setFilter(key, value)` | Set one column's filter; `null` clears it. Remote mode reloads from page 1 |
+| `clearFilters()` | Clear all filters (restoring each column's `defaultValue`) |
+| `columnWidths` | Widths of columns after dragging |
 | `tableRef` | The raw `NDataTable` instance (`scrollTo`, etc.) |
 
 ### Global default fields
@@ -407,10 +524,15 @@ Set via `createSmartTableDefaults({...})`; all optional:
 | `indexWidth` | `64` | Row number column width |
 | `tag` | `{ size: 'small', bordered: false }` | Tag style for `tag: true` columns |
 | `activeRowBg` | — | Background of the highlighted row |
+| `resizable` | `false` | Make every table's columns resizable by default |
+| `filterable` | `true` | Whether columns may declare header filters; `false` turns them off globally |
+| `resizeMinWidth` | `60` | Minimum width of a resizable column |
+| `filterSerializer` | see Header filters | Filter state -> request params |
 
 ### Other exports
 
 - `useSmartTable(fetcher, options)`: the UI-agnostic data core the component uses (loading, pagination, search, race guard) — build your own UI on it
+- Filter core: `matchFilterValue`, `applyFilters`, `defaultFilterSerializer`, `isFilterActive`, ... — UI-agnostic, reusable in a backend mock or your own UI
 - Helpers: `cleanParams`, `formatDate`, `formatDatetime`, `formatMoney`, `defaultLabels`, ...
 - All types: `SmartTableColumn`, `SmartTableFetcher`, `SmartTableInst`, `SmartTableOption`, `SearchConfig`, ...
 
@@ -420,7 +542,11 @@ Set via `createSmartTableDefaults({...})`; all optional:
 - During fast page flips, stale responses that arrive late are discarded
 - Reset restores each field to `defaultValue`, or `null` if none
 - A fixed column without `width` gets one automatically (`minWidth` or 120), so Naive's fixed columns stay aligned
-- `scroll-x` defaults to the sum of visible column widths; pass your own to override
+- `scroll-x` defaults to the sum of visible column widths (including dragged ones); pass your own to override
+- Changing filters goes back to page 1: remote mode reloads, static mode filters on the client
+- Conditions whose value is empty (`null` / `''` / `[]`) are dropped and never sent to the backend; `0` and `false` are kept
+- A date-only filter value (`YYYY-MM-DD`) compares by whole day, so `equals 2024-03-05` matches any time that day
+- Width writes to localStorage are debounced; the stored shape moved from `v1` to `v2`, and existing column visibility / order / pinning / density keep working
 
 ## Development
 

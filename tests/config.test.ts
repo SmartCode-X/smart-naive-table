@@ -28,6 +28,17 @@ describe('resolveDefaults 优先级', () => {
     expect(r.emptyText).toBe('N/A')
   })
 
+  it('开关类默认值:列宽拖拽默认关,表头过滤默认开', () => {
+    // 两者语义相反是有意的:列宽拖拽属于增强,过滤要列上声明了才出现,
+    // filterable 只作为「一键全关」的总闸。
+    expect(BUILTIN_DEFAULTS.resizable).toBe(false)
+    expect(BUILTIN_DEFAULTS.filterable).toBe(true)
+    expect(resolveDefaults({ resizable: true, filterable: false })).toMatchObject({
+      resizable: true,
+      filterable: false,
+    })
+  })
+
   it('tag 部分合并:只给 size,bordered 仍兜底', () => {
     const r = resolveDefaults({ tag: { size: 'medium' } })
     expect(r.tag).toEqual({ size: 'medium', bordered: false })

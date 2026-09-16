@@ -2,6 +2,7 @@
 // 优先级恒为 实例 prop / 列显式值 > 全局默认 > 内置兜底。
 // 不 provide 时全部取内置兜底(BUILTIN_DEFAULTS)。
 import { inject, type InjectionKey, type MaybeRefOrGetter } from 'vue'
+import { defaultFilterSerializer, type FilterSerializer } from './filter'
 import type { Density, SmartTableLabels } from './types'
 
 export interface SmartTableDefaults {
@@ -29,6 +30,14 @@ export interface SmartTableDefaults {
   searchCols?: number | string
   /** activeRowKey 命中行高亮背景;缺省走 CSS 变量默认值。 */
   activeRowBg?: string
+  /** 所有表格默认开启列宽拖拽;内置兜底 false。 */
+  resizable?: boolean
+  /** 是否允许列声明表头过滤;内置兜底 true。设 false 则全局关掉,实例 filter 可覆盖。 */
+  filterable?: boolean
+  /** 可拖拽列的最小宽度(拖到底也不小于它);内置兜底 60。 */
+  resizeMinWidth?: number
+  /** 过滤态 → 请求参数;内置兜底 defaultFilterSerializer。 */
+  filterSerializer?: FilterSerializer
   /** 组件 chrome 文案;传 ref/getter 即随 locale 响应(渲染期 toValue 解引用)。 */
   labels?: MaybeRefOrGetter<Partial<SmartTableLabels>>
 }
@@ -50,6 +59,10 @@ export type ResolvedSmartTableDefaults = {
   dateValueFormat: string
   searchCols: number | string
   activeRowBg?: string
+  resizable: boolean
+  filterable: boolean
+  resizeMinWidth: number
+  filterSerializer: FilterSerializer
   labels?: MaybeRefOrGetter<Partial<SmartTableLabels>>
 }
 
@@ -66,6 +79,10 @@ export const BUILTIN_DEFAULTS: ResolvedSmartTableDefaults = {
   density: 'comfortable',
   dateValueFormat: 'yyyy-MM-dd',
   searchCols: '1 s:2 m:3 l:4',
+  resizable: false,
+  filterable: true,
+  resizeMinWidth: 60,
+  filterSerializer: defaultFilterSerializer,
 }
 
 /** 宿主 main.ts:app.provide(SMART_TABLE_DEFAULTS, createSmartTableDefaults({...}))。仅为类型/自文档。 */

@@ -1,5 +1,5 @@
 import { reactive } from 'vue'
-import type { PageResult, SmartTableParams } from '../src/index'
+import { matchFilterValue, type PageResult, type SerializedFilter, type SmartTableParams } from '../src/index'
 import { tt } from './locale'
 
 export interface DemoRow {
@@ -40,6 +40,9 @@ const rows: DemoRow[] = Array.from({ length: 1000 }, (_, i) => {
   return row
 })
 
+/** 静态 data 模式的 demo 直接取这份数组(前端分页 + 前端过滤)。 */
+export const allRows = rows
+
 let nextId = rows.length + 1
 
 function delay(): Promise<void> {
@@ -64,6 +67,14 @@ export async function mockPage(params: SmartTableParams): Promise<PageResult<Dem
       const d = r.createTime.slice(0, 10)
       return d >= start && d <= end
     })
+  }
+  // 表头过滤:默认序列化器产出 { filters: [{ field, logic, conditions }] },
+  // 真实后端在这里翻译成 SQL/ORM 条件;demo 直接复用包内导出的求值函数。
+  const filters = params.filters as SerializedFilter[] | undefined
+  if (Array.isArray(filters)) {
+    for (const f of filters) {
+      list = list.filter((r) => matchFilterValue({ logic: f.logic, conditions: f.conditions }, r[f.field]))
+    }
   }
   return {
     items: list.slice((page - 1) * pageSize, page * pageSize),

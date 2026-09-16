@@ -15,6 +15,18 @@ export const defaultLabels: SmartTableLabels = {
   fixedNone: 'Unpin',
   expand: 'Expand',
   collapse: 'Collapse',
+  filter: 'Filter',
+  filterConfirm: 'OK',
+  filterReset: 'Reset',
+  filterSelectAll: 'Select all',
+  filterEqual: 'Equals',
+  filterNotEqual: 'Not equals',
+  filterContains: 'Contains',
+  filterNotContains: 'Not contains',
+  filterGt: 'Greater than',
+  filterGte: 'Greater or equal',
+  filterLt: 'Less than',
+  filterLte: 'Less or equal',
 }
 
 /** 三层合并:内置英文 < 全局默认(global)< 实例 prop(partial)。 */

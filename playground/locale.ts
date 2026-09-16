@@ -21,6 +21,18 @@ const zhLabels: SmartTableLabels = {
   fixedNone: '取消固定',
   expand: '展开',
   collapse: '收起',
+  filter: '过滤',
+  filterConfirm: '确定',
+  filterReset: '重置',
+  filterSelectAll: '全选',
+  filterEqual: '等于',
+  filterNotEqual: '不等于',
+  filterContains: '包含',
+  filterNotContains: '不包含',
+  filterGt: '大于',
+  filterGte: '大于等于',
+  filterLt: '小于',
+  filterLte: '小于等于',
 }
 
 /** zh 传中文包;en 传 undefined 走包内英文默认。 */
