@@ -1,7 +1,8 @@
 name: CI
 
 # 日常开发在 dev:push 到 dev、以及向 main / dev 提的 PR 都跑一遍检查。
-# main 开启了分支保护,PR 必须等本 job(ci)通过才能合并;main 上的检查与发布见 publish.yml。
+# main 只允许仓库所有者直接 push 发版,不走 PR;若确实对 main 开了 PR,仍需等本 job(ci)通过才能合并。
+# main 上的检查与发布见 publish.yml。
 on:
   push:
     branches: [dev]

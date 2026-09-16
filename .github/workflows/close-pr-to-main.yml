@@ -1,0 +1,26 @@
+name: Close PR to main
+
+# main 只用于发布,不接受任何人提交 PR。
+# GitHub 没有原生开关能直接禁止对某分支发起 PR(任何人 fork 后都能把 base 选成 main),
+# 只能靠这个 workflow 兜底:一旦 PR 的 base 是 main 且发起人不是仓库所有者,自动关闭并提示改投 dev。
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  close:
+    if: github.event.pull_request.user.login != 'SmartCode-X'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 关闭并提示改投 dev 分支
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr comment "$PR_NUMBER" --body "main 分支仅用于发布,不接受 Pull Request,请将改动重新提交到 dev 分支,感谢贡献!"
+          gh pr close "$PR_NUMBER"
