@@ -1,4 +1,4 @@
-import { computed, h, ref, type ComputedRef, type Ref, type Slots, type VNodeChild } from 'vue'
+import { computed, h, ref, watch, type ComputedRef, type Ref, type Slots, type VNodeChild } from 'vue'
 import { NTag } from 'naive-ui'
 import type { DataTableBaseColumn, DataTableColumn } from 'naive-ui'
 import type {
@@ -379,6 +379,36 @@ export function useColumns<T>(opts: UseColumnsOpts<T>): UseColumnsReturn<T> {
     if (opts.storageKey) clearState(opts.storageKey)
   }
 
+  /**
+   * 列被移除(不再声明)后,widths 里那份旧宽度要跟着清掉 —— 不然要是之后一个新列复用了
+   * 同一个 key,会莫名其妙地继承一份自己从没拖过的宽度;effectiveChecks/mergeCols 对
+   * 列设置(checks)本身已经做了这层过滤,widths 之前一直没有对应的清理入口。
+   * immediate:mount 时也顺手清一遍上一次会话留下的、对应列已经不在了的陈旧宽度。
+   */
+  watch(
+    () => opts.columns(),
+    () => {
+      const validKeys = new Set<string>(specialCols.value.map(specialColumnKey))
+      const walk = (cols: SmartTableDataColumn<T>[]) => {
+        for (const col of cols) {
+          if (col.children?.length) walk(col.children)
+          else validKeys.add(col.key)
+        }
+      }
+      walk(dataCols.value)
+
+      const staleKeys = Object.keys(widths.value).filter((k) => !validKeys.has(k))
+      if (staleKeys.length === 0) return
+      const next = { ...widths.value }
+      staleKeys.forEach((k) => delete next[k])
+      widths.value = next
+      if (opts.storageKey) saveState(opts.storageKey, density.value, effectiveChecks.value, next)
+    },
+    // sync:同步清理,不等下一轮 flush —— 否则列刚被移除的这一帧,naiveColumns/scrollX
+    // 还能读到那份陈旧宽度,可能闪一下不该出现的列宽再恢复。
+    { immediate: true, flush: 'sync' },
+  )
+
   const settingItems = computed<SettingItem[]>(() => {
     const titleByKey = new Map(managedCols.value.map((c) => [c.key, c.title]))
     return effectiveChecks.value.map((c) => ({ ...c, title: titleByKey.get(c.key) }))
@@ -398,6 +428,10 @@ export function useColumns<T>(opts: UseColumnsOpts<T>): UseColumnsReturn<T> {
       hideInTable: _hideInTable,
       hideInSetting: _hideInSetting,
       search: _search,
+      // 本包接管的表头过滤配置(FilterConfig),类型上已 Omit<..., 'filter'> 不继承 Naive
+      // 同名属性 —— 这里必须同样从 rest 里摘掉,否则会原样透传给 n-data-table,撞上它自己
+      // 内部的 filter/filterOptions/uncontrolledFilterStateRef 机制。
+      filter: _filter,
       children,
       ...naiveRest
     } = col
@@ -562,4 +596,33 @@ export function useColumns<T>(opts: UseColumnsOpts<T>): UseColumnsReturn<T> {
     naiveColumns,
     scrollX,
   }
+}
+
+/** 占位列的 key。它不进列设置、不排序、不过滤、不可拖拽,只负责把表格填满容器。 */
+export const FILLER_COLUMN_KEY = '__smart_filler'
+
+/**
+ * 列宽钉住(table-layout: fixed + 表格宽度 = 各列宽之和)后,列宽之和小于容器时补一列占位,
+ * 把富余宽度独自吃掉:表头底色、行底色、边框都铺到容器右缘,而每一列仍是拖出来的精确宽度。
+ * 不补的话表格右侧就是一块空白,补进真实列则会把富余摊回各列,拖一列会牵动其它列。
+ *
+ * 插在右固定列这一串的最前面 —— 找的是从数组末尾往前数、连续都是 fixed:'right' 的那一段
+ * 的起点,而不是第一个匹配项:右固定列理应声明在最后,但没有任何校验强制这一点,若中间也混了
+ * 一个 fixed:'right'(声明顺序或列设置里拖拽出来的),占位列仍要落在真正的尾部之前,不能卡在
+ * 表格中间把后续的非固定列隔断。`allowExport: false` 让它不进 downloadCsv 导出。
+ * width <= 0 时原样返回。
+ */
+export function withFillerColumn<T>(columns: DataTableColumn<T>[], width: number): DataTableColumn<T>[] {
+  if (!(width > 0)) return columns
+  const filler: DataTableBaseColumn<T> = {
+    key: FILLER_COLUMN_KEY,
+    title: '',
+    width,
+    className: 'smart-table-filler-col',
+    allowExport: false,
+    render: () => null,
+  }
+  let at = columns.length
+  while (at > 0 && columns[at - 1].fixed === 'right') at--
+  return [...columns.slice(0, at), filler, ...columns.slice(at)]
 }

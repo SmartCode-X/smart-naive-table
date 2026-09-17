@@ -4,8 +4,60 @@
 import type { FilterAction, FilterCondition, FilterLogic, FilterState, FilterValue } from './types'
 
 const DAY = 86_400_000
-/** 纯日期串(无时分秒)—— 命中后按「整天区间」比较,而非时间戳点比较。 */
-const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
+/** dayRange() 不传 dateValueFormat 时的缺省形状,对齐 ColumnFilter/SearchForm 的默认值。 */
+const DEFAULT_DATE_VALUE_FORMAT = 'yyyy-MM-dd'
+
+/**
+ * 按 dateValueFormat(SmartTableDefaults 里配的那个,ColumnFilter 的日期条件用它当
+ * n-date-picker 的 value-format)把纯日期串解析成 { y, m, d }。只支持 yyyy/MM/dd 三个
+ * token 各出现一次、之间用任意字面分隔符隔开的形状 —— 覆盖 'yyyy-MM-dd'/'yyyy/MM/dd'/
+ * 'dd/MM/yyyy' 这类常见自定义格式。解析不出来(用了 yy/M/d 这类短 token,或 host 传了别的
+ * 花样格式)就返回 null,调用方照旧退回按原始值的标量比较 —— 不会比不做这个解析更差。
+ */
+function buildDateOnlyPattern(format: string): { regex: RegExp; order: Array<'y' | 'm' | 'd'> } | null {
+  const order: Array<'y' | 'm' | 'd'> = []
+  let pattern = ''
+  let i = 0
+  while (i < format.length) {
+    if (format.startsWith('yyyy', i)) {
+      order.push('y')
+      pattern += '(\\d{4})'
+      i += 4
+    } else if (format.startsWith('MM', i)) {
+      order.push('m')
+      pattern += '(\\d{2})'
+      i += 2
+    } else if (format.startsWith('dd', i)) {
+      order.push('d')
+      pattern += '(\\d{2})'
+      i += 2
+    } else {
+      pattern += format[i].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      i += 1
+    }
+  }
+  if (order.length !== 3 || new Set(order).size !== 3) return null
+  return { regex: new RegExp(`^${pattern}$`), order }
+}
+
+/** 同一个 format 反复解析没必要重建正则,按 format 字符串缓存。 */
+const dateOnlyPatternCache = new Map<string, ReturnType<typeof buildDateOnlyPattern>>()
+
+function parseDateOnly(value: string, format: string): { y: number; m: number; d: number } | null {
+  let parser = dateOnlyPatternCache.get(format)
+  if (parser === undefined) {
+    parser = buildDateOnlyPattern(format)
+    dateOnlyPatternCache.set(format, parser)
+  }
+  if (!parser) return null
+  const m = parser.regex.exec(value.trim())
+  if (!m) return null
+  const result = { y: 0, m: 0, d: 0 }
+  parser.order.forEach((key, idx) => {
+    result[key] = Number(m[idx + 1])
+  })
+  return result
+}
 
 /** 空值:null / undefined / 空串 / 空数组。false 与 0 不算空。 */
 export function isBlank(v: unknown): boolean {
@@ -59,20 +111,29 @@ function compareValues(a: unknown, b: unknown): number | null {
  * 否则返回 null,走普通标量比较。
  * —— 让「创建时间 等于 2024-03-05」能命中当天任意时刻,而不是要求毫秒级相等。
  */
-function dayRange(cell: unknown, value: unknown): { cellTs: number; start: number; end: number } | null {
-  if (typeof value !== 'string' || !DATE_ONLY.test(value.trim())) return null
-  // 显式 UTC 锚定(带 Z):不加 Z 时 Date.parse 按运行环境本地时区解析,
-  // 会让「整天」边界随浏览器/服务端时区漂移,与单元格的绝对时间戳产生时区依赖的偏差。
-  const start = Date.parse(`${value.trim()}T00:00:00Z`)
-  if (Number.isNaN(start)) return null
+function dayRange(
+  cell: unknown,
+  value: unknown,
+  dateValueFormat: string,
+): { cellTs: number; start: number; end: number } | null {
+  if (typeof value !== 'string') return null
+  const parsed = parseDateOnly(value, dateValueFormat)
+  if (!parsed) return null
   const cellTs = cell instanceof Date ? cell.getTime() : typeof cell === 'string' ? Date.parse(cell) : NaN
   if (Number.isNaN(cellTs)) return null
+  // 本地时区锚定,不用 UTC:单元格若是不带时区偏移的裸日期时间串(常见于后端直出的
+  // datetime 字段),Date.parse 按运行环境本地时区解析 —— 与 formatDate/formatDatetime
+  // 展示用的 getFullYear/getHours 是同一套本地时间基准。「整天」边界也必须锚在同一基准上,
+  // 否则「等于 2024-03-05」按 UTC 零点切,裸日期时间串按本地零点切,两边对不齐,会让页面上
+  // 明明显示在 3 月 5 日的行被判定成不匹配(时区在 UTC 前面时尤其明显)。
+  const start = new Date(parsed.y, parsed.m - 1, parsed.d).getTime()
+  if (Number.isNaN(start)) return null
   return { cellTs, start, end: start + DAY }
 }
 
-function matchEqual(cell: unknown, value: unknown): boolean {
+function matchEqual(cell: unknown, value: unknown, dateValueFormat: string): boolean {
   if (cell === value) return true
-  const day = dayRange(cell, value)
+  const day = dayRange(cell, value, dateValueFormat)
   if (day) return day.cellTs >= day.start && day.cellTs < day.end
   return compareValues(cell, value) === 0
 }
@@ -85,14 +146,23 @@ function matchContains(cell: unknown, value: unknown): boolean {
   return String(cell).toLowerCase().includes(needle)
 }
 
-/** 单条件求值。单元格为空时:notEqual/notContains 为真,其余为假。 */
-export function matchCondition(cond: FilterCondition, cell: unknown): boolean {
+/**
+ * 单条件求值。单元格为空时:notEqual/notContains 为真,其余为假。
+ * dateValueFormat 对齐 ColumnFilter 日期条件用的 n-date-picker value-format(缺省
+ * 'yyyy-MM-dd')—— host 改了这个配置,「等于某天」的判定也要按同一种形状解析过滤值,
+ * 否则值形状对不上,day-range 直接退化成普通标量比较,整天语义悄悄失效。
+ */
+export function matchCondition(
+  cond: FilterCondition,
+  cell: unknown,
+  dateValueFormat: string = DEFAULT_DATE_VALUE_FORMAT,
+): boolean {
   const { action, value } = cond
   switch (action) {
     case 'equal':
-      return matchEqual(cell, value)
+      return matchEqual(cell, value, dateValueFormat)
     case 'notEqual':
-      return !matchEqual(cell, value)
+      return !matchEqual(cell, value, dateValueFormat)
     case 'contains':
       return matchContains(cell, value)
     case 'notContains':
@@ -101,7 +171,7 @@ export function matchCondition(cond: FilterCondition, cell: unknown): boolean {
     case 'gte':
     case 'lt':
     case 'lte': {
-      const day = dayRange(cell, value)
+      const day = dayRange(cell, value, dateValueFormat)
       if (day) {
         // 日期粒度:> 某天 = 该天结束之后;<= 某天 = 该天结束之前
         if (action === 'gt') return day.cellTs >= day.end
@@ -124,11 +194,17 @@ export function matchCondition(cond: FilterCondition, cell: unknown): boolean {
 }
 
 /** 一列的过滤值对单个单元格求值;无生效条件 → 放行。 */
-export function matchFilterValue(value: FilterValue | null | undefined, cell: unknown): boolean {
+export function matchFilterValue(
+  value: FilterValue | null | undefined,
+  cell: unknown,
+  dateValueFormat: string = DEFAULT_DATE_VALUE_FORMAT,
+): boolean {
   const conds = activeConditions(value)
   if (conds.length === 0) return true
   const logic: FilterLogic = value?.logic === 'or' ? 'or' : 'and'
-  return logic === 'or' ? conds.some((c) => matchCondition(c, cell)) : conds.every((c) => matchCondition(c, cell))
+  return logic === 'or'
+    ? conds.some((c) => matchCondition(c, cell, dateValueFormat))
+    : conds.every((c) => matchCondition(c, cell, dateValueFormat))
 }
 
 /** applyFilters 需要的最小列信息(由 FilterDef 满足)。 */
@@ -142,14 +218,19 @@ export interface FilterableField<T = any> {
 }
 
 /** 本地(静态 data)过滤:各列之间恒为「与」,列内部由 logic 决定。 */
-export function applyFilters<T>(rows: T[], fields: FilterableField<T>[], state: FilterState): T[] {
+export function applyFilters<T>(
+  rows: T[],
+  fields: FilterableField<T>[],
+  state: FilterState,
+  dateValueFormat: string = DEFAULT_DATE_VALUE_FORMAT,
+): T[] {
   const active = fields.filter((f) => isFilterActive(state[f.key]))
   if (active.length === 0) return rows
   return rows.filter((row) =>
     active.every((f) => {
       const value = state[f.key]!
       if (f.filter) return f.filter(value, row)
-      return matchFilterValue(value, (row as Record<string, unknown>)[f.field])
+      return matchFilterValue(value, (row as Record<string, unknown>)[f.field], dateValueFormat)
     }),
   )
 }

@@ -1,7 +1,20 @@
 <script setup lang="ts" generic="T">
 // 唯一胶水层:useSmartTable(数据)+ useOptions(字典)+ useColumns(列/设置)组装。
 // props 用运行时声明 + PropType:泛型 + 复杂导入类型下比纯类型声明稳。
-import { computed, h, onBeforeUnmount, toValue, useAttrs, useSlots, watch, type PropType, type Slots } from 'vue'
+import {
+  computed,
+  h,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  readonly,
+  toValue,
+  useAttrs,
+  useSlots,
+  watch,
+  type PropType,
+  type Slots,
+} from 'vue'
 import { NCard, NDataTable } from 'naive-ui'
 import type { DataTableInst, PaginationInfo, PaginationProps } from 'naive-ui'
 import type {
@@ -23,6 +36,7 @@ import {
   deriveOptionsSources,
   deriveSearchDefs,
   useColumns,
+  withFillerColumn,
   type FilterDef,
 } from './useColumns'
 import { applyFilters } from './filter'
@@ -251,6 +265,11 @@ function onColumnResize(resizedWidth: number, limitedWidth: number, column: unkn
       resizingKey = colKey
       columnsApi.freezeWidths(getColumnWidth as (k: string) => number | undefined)
       window.addEventListener('mouseup', endResize, { once: true })
+      // 手势中途松开鼠标发生在浏览器窗口之外(拖出视口边界再放开)时,window 收不到 mouseup ——
+      // 用 blur 兜底,窗口失焦也当成手势结束。否则 resizingKey/pendingWidth 会一直悬着,被下一次
+      // 跟本次拖拽毫不相关的 mouseup 误触发,把陈旧宽度悄悄落回列定义。endResize 本身是幂等的
+      // (resizingKey 为 null 时直接跳过),两个监听器谁先触发都安全,另一个自会在下次触发时空跑。
+      window.addEventListener('blur', endResize, { once: true })
     }
     pendingWidth = limitedWidth
     // 拖拽期间列宽由 Naive 内部的拖拽态渲染,我们只负责让表格总宽跟上
@@ -292,8 +311,15 @@ function onResetSettings() {
   if (hadWidths) tableKey.value++
 }
 
+// 本地模式的分页是非受控的(不传 page,交给 Naive 自己的 uncontrolledCurrentPageRef);
+// tableKey 变化强制重挂 <n-data-table> 时,新实例的分页状态会从头初始化回第 1 页 ——
+// 拿 localPage 记住用户翻到的页码,重挂后用 defaultPage 把起始页续上,而不是把分页
+// 也改成受控(那是更大的行为变更,这里只需要「重挂不掉页」)。
+const localPage = ref(1)
+
 onBeforeUnmount(() => {
   window.removeEventListener('mouseup', endResize)
+  window.removeEventListener('blur', endResize)
   resizingKey = null
 })
 
@@ -309,7 +335,7 @@ const tableSize = computed(() => (columnsApi.density.value === 'compact' ? 'smal
 const tableData = computed(() => {
   if (isRemote.value) return rows.value as Record<string, any>[]
   const local = props.data ?? []
-  return applyFilters(local, filterDefs.value, filters.state.value) as Record<string, any>[]
+  return applyFilters(local, filterDefs.value, filters.state.value, defaults.dateValueFormat) as Record<string, any>[]
 })
 
 const searchConfig = computed<SearchFormConfig>(() => {
@@ -347,7 +373,19 @@ const mergedPagination = computed<false | PaginationProps>(() => {
       ...user,
     }
   }
-  return { ...base, defaultPageSize: props.defaultPageSize, ...user }
+  return {
+    ...base,
+    defaultPageSize: props.defaultPageSize,
+    defaultPage: localPage.value,
+    ...user,
+    onUpdatePage: (p: number) => {
+      localPage.value = p
+      // Naive 的 onUpdatePage 允许传数组(多个监听器合并),宿主理论上也可能这么传
+      const hostHandler = user.onUpdatePage
+      if (Array.isArray(hostHandler)) hostHandler.forEach((fn) => fn(p))
+      else hostHandler?.(p)
+    },
+  }
 })
 
 /**
@@ -356,7 +394,8 @@ const mergedPagination = computed<false | PaginationProps>(() => {
  *  1. table-layout 切 fixed —— Naive 默认是 auto,auto 下 <col> 宽度只是建议值,
  *     浏览器每次都按内容重新求解整张表,改一列所有列都会挪。
  *  2. 表格宽度写死成各列之和(而不是 CSS 里的 width:100%)—— 否则收窄某列腾出的
- *     富余宽度会被摊回其余列,左侧的列跟着变宽。
+ *     富余宽度会被摊回其余列,左侧的列跟着变宽。富余宽度改由一列占位列独自吃掉
+ *     (见 fillerWidth),表格因此既填满容器又不牵动任何一列。
  */
 const colsPinned = columnsApi.pinned
 
@@ -374,8 +413,26 @@ const mergedTableLayout = computed<'auto' | 'fixed' | undefined>(() => {
  */
 const dragDelta = ref(0)
 
-/** 表格总宽 = 各列宽度之和(+ 拖拽中的临时增量)。scroll-x 与 CSS 变量共用,两者必须一致。 */
-const colsWidth = computed(() => columnsApi.scrollX.value + dragDelta.value)
+/** 表格包含块(Naive 的横向滚动容器)的可见宽度,由下方 measureHost 维护。 */
+const hostWidth = ref(0)
+
+/**
+ * 列宽之和小于容器时的富余宽度,交给一列占位列独自吃掉(见 withFillerColumn):
+ * 表头底色、行底色、边框都铺到容器右缘,每一列仍是拖出来的精确宽度。
+ * 含 dragDelta:拖拽期间正在拖的列由 Naive 实时渲染出新宽度,若占位列宽度不
+ * 跟着让出这部分增量,表格总宽(colsWidth)会在松手前偏离容器宽度,右侧短暂
+ * 露出留白(或反向撑出横向滚动条)——这正是本次 PR 要修的那个 bug,拖拽中也
+ * 不能再犯。富余耗尽(含正在拖拽的增量后)则钉到 0,退回横向滚动。
+ */
+const fillerWidth = computed(() =>
+  colsPinned.value ? Math.max(0, hostWidth.value - columnsApi.scrollX.value - dragDelta.value) : 0,
+)
+
+/** 交给 Naive 的最终列:钉住且有富余时,在右固定列之前补一列占位。 */
+const displayColumns = computed(() => withFillerColumn(columnsApi.naiveColumns.value, fillerWidth.value))
+
+/** 表格总宽 = 各列宽度之和 + 占位列(+ 拖拽中的临时增量)。scroll-x 与 CSS 变量共用,两者必须一致。 */
+const colsWidth = computed(() => columnsApi.scrollX.value + fillerWidth.value + dragDelta.value)
 
 const rootStyle = computed(() => ({
   '--smart-table-active-row-bg': defaults.activeRowBg,
@@ -427,13 +484,52 @@ function refresh(): Promise<void> {
 /* ---- 行拖拽排序(sortablejs 懒加载,仅 rowDraggable 时) ---- */
 const rootRef = ref<HTMLElement | null>(null)
 
-useRowDrag<T>({
+/* ---- 占位列:量出容器宽度 ---- */
+
+let resizeObserver: ResizeObserver | null = null
+let observedBody: HTMLElement | null = null
+
+/**
+ * 表格的包含块是 Naive 的横向滚动容器,占位列按它的可见宽度(已扣掉纵向滚动条)补。
+ * 这个元素会随 tableKey 重建,所以每次测量顺手把 ResizeObserver 挪到当前这个上。
+ */
+function measureHost() {
+  const body = rootRef.value?.querySelector<HTMLElement>('.n-data-table-base-table-body') ?? null
+  if (resizeObserver && body !== observedBody) {
+    if (observedBody) resizeObserver.unobserve(observedBody)
+    if (body) resizeObserver.observe(body)
+    observedBody = body
+  }
+  hostWidth.value = body?.clientWidth ?? 0
+}
+
+onMounted(() => {
+  // SSR / 测试环境可能没有 ResizeObserver:量一次就走,占位列退化成不补(与本次改动前一致)
+  if (typeof ResizeObserver !== 'undefined') resizeObserver = new ResizeObserver(() => measureHost())
+  measureHost()
+})
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  resizeObserver = null
+  observedBody = null
+})
+
+// 列增删/显隐与表格重建会换掉滚动容器,ResizeObserver 收不到,这里补一次测量
+watch([() => columnsApi.naiveColumns.value.length, tableKey], () => void nextTick(measureHost))
+
+const rowDrag = useRowDrag<T>({
   enabled: () => props.rowDraggable,
   getTbody: () => rootRef.value?.querySelector<HTMLElement>('.n-data-table-tbody'),
   rows: () => (isRemote.value ? rows.value : props.data) as T[] | undefined,
   handle: () => props.dragHandle,
   onSort: (e) => emit('rowDragSort', e),
 })
+// useRowDrag 内部只在 rows 数组变化时重新绑定;tableKey 变化(「恢复默认」强制重挂
+// <n-data-table>)换掉的是 DOM 里的 tbody 本身,rows 数组引用/内容都没变,那个 watch
+// 不会触发 —— sortable 实例还挂在已经被卸载的旧 tbody 上,行拖拽因此悄悄失效。这里补一次
+// 主动对齐,让它去找新挂载出来的 tbody 重新绑定。
+watch(tableKey, () => void rowDrag.sync())
 
 defineExpose({
   refresh,
@@ -444,10 +540,14 @@ defineExpose({
   params,
   pagination,
   reloadOptions: options.reload,
-  filters: filters.state,
+  // readonly() 包一层:文档写的是「只读快照,改动请用 setFilter/setWidth」,但暴露原始 ref
+  // 只是君子协定,host 直接 `.value =` 赋值一样能改——会绕开 setFilter 的去重 + onChange
+  // 回调(远程模式漏发重查)、绕开 setWidth 的 localStorage 持久化(下次刷新被覆盖)。
+  // readonly 让这类赋值在开发环境下报警并不生效,读取/深层响应式不受影响。
+  filters: readonly(filters.state),
   setFilter: filters.setFilter,
   clearFilters: filters.clearFilters,
-  columnWidths: columnsApi.widths,
+  columnWidths: readonly(columnsApi.widths),
   tableRef,
 })
 </script>
@@ -499,7 +599,7 @@ defineExpose({
         :key="tableKey"
         ref="tableRef"
         :remote="isRemote"
-        :columns="columnsApi.naiveColumns.value"
+        :columns="displayColumns"
         :data="tableData"
         :loading="isRemote ? loading : false"
         :row-key="rowKeyFn"
@@ -525,11 +625,16 @@ defineExpose({
   flex-direction: column;
   gap: 16px;
 }
-/* 列宽钉住后,表格宽度 = 各列宽度之和(Naive 基础样式是 width:100%)。
-   不改的话收窄某列腾出的富余宽度会被摊回其余列,拖一列左侧的列跟着动。
-   宽度小于容器时表格右侧留白 —— 这正是「只改右边、左侧不动」的效果。 */
+/* 列宽钉住后,表格宽度 = 各列宽度之和 + 占位列(Naive 基础样式是 width:100%)。
+   不改的话收窄某列腾出的富余宽度会被摊回其余列,拖一列左侧的列跟着动;
+   富余宽度由占位列独自吃掉,表格照样填满容器,右侧不留白(见 withFillerColumn)。 */
 .smart-table--pinned-cols :deep(.n-data-table-table) {
   width: var(--smart-table-cols-width);
+}
+/* 占位列(withFillerColumn)不是真实数据列,只用来把富余宽度填满容器:
+   去掉指针交互提示,免得它看起来像还能点的一格。 */
+.smart-table :deep(.smart-table-filler-col) {
+  pointer-events: none;
 }
 /* 列宽拖拽手柄归位。Naive 默认把它放偏了:命中区 right 是 container-size/2,
    可见竖线在命中区内又 left 了 container-size/2,两次叠加 —— 那根线落在列边界左侧
