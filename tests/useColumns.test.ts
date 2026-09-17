@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { h, type Slots, type VNode } from 'vue'
-import { deriveFilterDefs, useColumns, type FilterDef } from '../src/useColumns'
+import type { DataTableBaseColumn, DataTableColumn } from 'naive-ui'
+import {
+  deriveFilterDefs,
+  useColumns,
+  withFillerColumn,
+  FILLER_COLUMN_KEY,
+  type FilterDef,
+} from '../src/useColumns'
 import { resolveDefaults } from '../src/config'
 import type { SmartTableColumn, SmartTableOption } from '../src/types'
 
@@ -304,5 +311,58 @@ describe('useColumns 列宽拖拽', () => {
     api.setWidth('name', 260)
     expect(setItem).not.toHaveBeenCalled()
     vi.unstubAllGlobals()
+  })
+})
+describe('withFillerColumn:列宽钉住后用占位列填满容器', () => {
+  const cols = (): DataTableColumn<Row>[] => [
+    { key: 'name', title: 'N', width: 100 },
+    { key: 'amt', title: 'A', width: 100 },
+    { key: 'op', title: 'OP', width: 100, fixed: 'right' },
+  ]
+
+  it('富余宽度 <= 0 时原样返回,不补列', () => {
+    const input = cols()
+    expect(withFillerColumn(input, 0)).toBe(input)
+    expect(withFillerColumn(input, -20)).toBe(input)
+  })
+
+  it('补出来的占位列宽度就是富余宽度,原有列一列不动', () => {
+    const out = withFillerColumn(cols(), 260)
+    const filler = out.find((c) => 'key' in c && c.key === FILLER_COLUMN_KEY) as DataTableBaseColumn<Row>
+    expect(filler.width).toBe(260)
+    expect(out.filter((c) => 'key' in c && c.key !== FILLER_COLUMN_KEY)).toEqual(cols())
+  })
+
+  it('占位列插在右固定列之前 —— 操作列仍贴容器右缘', () => {
+    const out = withFillerColumn(cols(), 260)
+    expect(out.map((c) => ('key' in c ? c.key : ''))).toEqual(['name', 'amt', FILLER_COLUMN_KEY, 'op'])
+  })
+
+  it('没有右固定列时补在最后', () => {
+    const out = withFillerColumn(cols().slice(0, 2), 260)
+    expect(out.map((c) => ('key' in c ? c.key : ''))).toEqual(['name', 'amt', FILLER_COLUMN_KEY])
+  })
+
+  it('右固定列不是连续的尾部一段时,占位列仍要落在真正的尾部之前,不能卡在中间', () => {
+    // 中间混了一个 fixed:'right'(声明顺序或列设置拖拽出来的),op2 才是真正贴右缘的那一个
+    const withMidFixed: DataTableColumn<Row>[] = [
+      { key: 'name', title: 'N', width: 100 },
+      { key: 'amt', title: 'A', width: 100, fixed: 'right' },
+      { key: 'remark', title: 'R', width: 100 },
+      { key: 'op2', title: 'OP2', width: 100, fixed: 'right' },
+    ]
+    const out = withFillerColumn(withMidFixed, 260)
+    expect(out.map((c) => ('key' in c ? c.key : ''))).toEqual(['name', 'amt', 'remark', FILLER_COLUMN_KEY, 'op2'])
+  })
+
+  it('占位列不可拖拽、不排序、不过滤、不进 CSV 导出 —— 只是一块填白', () => {
+    const filler = withFillerColumn(cols(), 260).find(
+      (c) => 'key' in c && c.key === FILLER_COLUMN_KEY,
+    ) as DataTableBaseColumn<Row>
+    expect(filler.resizable).toBeUndefined()
+    expect(filler.sorter).toBeUndefined()
+    expect(filler.filter).toBeUndefined()
+    expect(filler.allowExport).toBe(false)
+    expect(filler.title).toBe('')
   })
 })

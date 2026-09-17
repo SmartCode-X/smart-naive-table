@@ -261,7 +261,7 @@ Add `resizable` to the table and every data column can be dragged by its right h
 - With `storage-key`, widths are stored in localStorage next to the column settings and survive reloads
 - `@column-resize` (`key`, `width`) fires continuously while dragging; the localStorage write is debounced internally
 - **Dragging one column changes only that column**: the first drag pins every column (including index / selection) to its current rendered width and switches the table to `table-layout: fixed` with its width fixed to the sum of the columns. Columns to the left stay put; only the dragged one follows the cursor
-- Once widths are pinned the table no longer stretches to the container: narrowing a column leaves space on the right, widening adds horizontal scroll. "Restore defaults" in column settings brings back the auto-fit behavior
+- **The table always fills its container**: when the columns add up to less than the container, the leftover width is absorbed by a single filler column (inserted before the right-fixed ones, so header and row backgrounds still reach the right edge) while every real column keeps the width you dragged; widening past the container scrolls horizontally as before. "Restore defaults" in column settings brings back the auto-fit behavior
 - Columns can't be dragged to zero: resizable columns get a fallback `minWidth` (60 by default), and an explicit `minWidth` on the column wins
 - "Restore defaults" in column settings resets widths too
 
