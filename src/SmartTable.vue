@@ -7,6 +7,7 @@ import {
   nextTick,
   onBeforeUnmount,
   onMounted,
+  readonly,
   toValue,
   useAttrs,
   useSlots,
@@ -264,6 +265,11 @@ function onColumnResize(resizedWidth: number, limitedWidth: number, column: unkn
       resizingKey = colKey
       columnsApi.freezeWidths(getColumnWidth as (k: string) => number | undefined)
       window.addEventListener('mouseup', endResize, { once: true })
+      // 手势中途松开鼠标发生在浏览器窗口之外(拖出视口边界再放开)时,window 收不到 mouseup ——
+      // 用 blur 兜底,窗口失焦也当成手势结束。否则 resizingKey/pendingWidth 会一直悬着,被下一次
+      // 跟本次拖拽毫不相关的 mouseup 误触发,把陈旧宽度悄悄落回列定义。endResize 本身是幂等的
+      // (resizingKey 为 null 时直接跳过),两个监听器谁先触发都安全,另一个自会在下次触发时空跑。
+      window.addEventListener('blur', endResize, { once: true })
     }
     pendingWidth = limitedWidth
     // 拖拽期间列宽由 Naive 内部的拖拽态渲染,我们只负责让表格总宽跟上
@@ -305,8 +311,15 @@ function onResetSettings() {
   if (hadWidths) tableKey.value++
 }
 
+// 本地模式的分页是非受控的(不传 page,交给 Naive 自己的 uncontrolledCurrentPageRef);
+// tableKey 变化强制重挂 <n-data-table> 时,新实例的分页状态会从头初始化回第 1 页 ——
+// 拿 localPage 记住用户翻到的页码,重挂后用 defaultPage 把起始页续上,而不是把分页
+// 也改成受控(那是更大的行为变更,这里只需要「重挂不掉页」)。
+const localPage = ref(1)
+
 onBeforeUnmount(() => {
   window.removeEventListener('mouseup', endResize)
+  window.removeEventListener('blur', endResize)
   resizingKey = null
 })
 
@@ -322,7 +335,7 @@ const tableSize = computed(() => (columnsApi.density.value === 'compact' ? 'smal
 const tableData = computed(() => {
   if (isRemote.value) return rows.value as Record<string, any>[]
   const local = props.data ?? []
-  return applyFilters(local, filterDefs.value, filters.state.value) as Record<string, any>[]
+  return applyFilters(local, filterDefs.value, filters.state.value, defaults.dateValueFormat) as Record<string, any>[]
 })
 
 const searchConfig = computed<SearchFormConfig>(() => {
@@ -360,7 +373,19 @@ const mergedPagination = computed<false | PaginationProps>(() => {
       ...user,
     }
   }
-  return { ...base, defaultPageSize: props.defaultPageSize, ...user }
+  return {
+    ...base,
+    defaultPageSize: props.defaultPageSize,
+    defaultPage: localPage.value,
+    ...user,
+    onUpdatePage: (p: number) => {
+      localPage.value = p
+      // Naive 的 onUpdatePage 允许传数组(多个监听器合并),宿主理论上也可能这么传
+      const hostHandler = user.onUpdatePage
+      if (Array.isArray(hostHandler)) hostHandler.forEach((fn) => fn(p))
+      else hostHandler?.(p)
+    },
+  }
 })
 
 /**
@@ -493,13 +518,18 @@ onBeforeUnmount(() => {
 // 列增删/显隐与表格重建会换掉滚动容器,ResizeObserver 收不到,这里补一次测量
 watch([() => columnsApi.naiveColumns.value.length, tableKey], () => void nextTick(measureHost))
 
-useRowDrag<T>({
+const rowDrag = useRowDrag<T>({
   enabled: () => props.rowDraggable,
   getTbody: () => rootRef.value?.querySelector<HTMLElement>('.n-data-table-tbody'),
   rows: () => (isRemote.value ? rows.value : props.data) as T[] | undefined,
   handle: () => props.dragHandle,
   onSort: (e) => emit('rowDragSort', e),
 })
+// useRowDrag 内部只在 rows 数组变化时重新绑定;tableKey 变化(「恢复默认」强制重挂
+// <n-data-table>)换掉的是 DOM 里的 tbody 本身,rows 数组引用/内容都没变,那个 watch
+// 不会触发 —— sortable 实例还挂在已经被卸载的旧 tbody 上,行拖拽因此悄悄失效。这里补一次
+// 主动对齐,让它去找新挂载出来的 tbody 重新绑定。
+watch(tableKey, () => void rowDrag.sync())
 
 defineExpose({
   refresh,
@@ -510,10 +540,14 @@ defineExpose({
   params,
   pagination,
   reloadOptions: options.reload,
-  filters: filters.state,
+  // readonly() 包一层:文档写的是「只读快照,改动请用 setFilter/setWidth」,但暴露原始 ref
+  // 只是君子协定,host 直接 `.value =` 赋值一样能改——会绕开 setFilter 的去重 + onChange
+  // 回调(远程模式漏发重查)、绕开 setWidth 的 localStorage 持久化(下次刷新被覆盖)。
+  // readonly 让这类赋值在开发环境下报警并不生效,读取/深层响应式不受影响。
+  filters: readonly(filters.state),
   setFilter: filters.setFilter,
   clearFilters: filters.clearFilters,
-  columnWidths: columnsApi.widths,
+  columnWidths: readonly(columnsApi.widths),
   tableRef,
 })
 </script>

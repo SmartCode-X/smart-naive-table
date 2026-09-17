@@ -3,6 +3,19 @@ import { isFilterActive } from './filter'
 import type { FilterState, FilterValue } from './types'
 import { deriveInitFilters, type FilterDef } from './useColumns'
 
+/**
+ * 两个 FilterState 内容是否一致 —— 按 key 逐个比较,而不是整体 JSON.stringify。
+ * 整体序列化对「顶层键的插入顺序」敏感:哪个过滤列先激活、defaultValue 补种是在初始挂载
+ * 还是列定义后追加到达,都会让同一份内容序列化出不同的字符串,把「没变」误判成「变了」,
+ * clearFilters 在没有实际变化时也会白白触发一次 onChange(远程模式多打一次请求)。
+ */
+function filterStateEqual(a: FilterState, b: FilterState): boolean {
+  const aKeys = Object.keys(a)
+  const bKeys = Object.keys(b)
+  if (aKeys.length !== bKeys.length) return false
+  return aKeys.every((k) => JSON.stringify(a[k]) === JSON.stringify(b[k]))
+}
+
 export interface UseFiltersOpts<T> {
   /** 当前过滤项(getter:列定义变化后能补种新列的 defaultValue)。 */
   defs: () => FilterDef<T>[]
@@ -29,18 +42,16 @@ export function useFilters<T>(opts: UseFiltersOpts<T>): UseFiltersReturn {
   const state = ref<FilterState>(deriveInitFilters(opts.defs()))
   const seeded = new Set(opts.defs().map((d) => d.key))
 
-  // 列定义后追加的过滤列:补种一次 defaultValue(已播种过的列不再回填)
+  // 列定义后追加的过滤列:补种一次 defaultValue(已播种过的列不再回填)。
+  // 「defaultValue 是否生效」这条判断口径复用 deriveInitFilters(而不是在这里重新写一遍),
+  // 否则两处各改各的,同一份配置在「初始挂载」和「后续追加」两条路径上会悄悄给出不同的初始
+  // 过滤态 —— useColumns.ts 的 deriveInitFilters 上也留了同样的提醒。
   watch(opts.defs, (defs) => {
-    let next: FilterState | null = null
-    for (const def of defs) {
-      if (seeded.has(def.key)) continue
-      seeded.add(def.key)
-      if (def.defaultValue && isFilterActive(def.defaultValue)) {
-        next = next ?? { ...state.value }
-        next[def.key] = def.defaultValue
-      }
-    }
-    if (next) state.value = next
+    const freshDefs = defs.filter((d) => !seeded.has(d.key))
+    if (freshDefs.length === 0) return
+    freshDefs.forEach((d) => seeded.add(d.key))
+    const seededValues = deriveInitFilters(freshDefs)
+    if (Object.keys(seededValues).length > 0) state.value = { ...state.value, ...seededValues }
   })
 
   function getFilter(key: string): FilterValue | null {
@@ -60,7 +71,7 @@ export function useFilters<T>(opts: UseFiltersOpts<T>): UseFiltersReturn {
 
   function clearFilters() {
     const next = deriveInitFilters(opts.defs())
-    if (JSON.stringify(next) === JSON.stringify(state.value)) return
+    if (filterStateEqual(next, state.value)) return
     state.value = next
     opts.onChange?.('', null, next)
   }

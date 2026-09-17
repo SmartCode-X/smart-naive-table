@@ -157,6 +157,26 @@ describe('useFilters', () => {
     expect(onChange).toHaveBeenLastCalledWith('', null, { status: v(1) })
   })
 
+  it('clearFilters 判断「是否真的变了」不受 state 顶层键插入顺序影响', () => {
+    const { api, onChange } = build([
+      { key: 'a', filter: { defaultValue: v(1) } },
+      { key: 'b', filter: { defaultValue: v(2) } },
+    ])
+    expect(Object.keys(api.state.value)).toEqual(['a', 'b']) // 初始态按声明顺序
+
+    // 删掉 a 再加回来:a 在 state.value 里被重新插入到末尾,顶层键序变成 [b, a],
+    // 内容其实跟 deriveInitFilters 重新算出来的 { a, b }(声明顺序)一模一样
+    api.setFilter('a', null)
+    api.setFilter('a', v(1))
+    expect(Object.keys(api.state.value)).toEqual(['b', 'a'])
+    expect(api.state.value).toEqual({ a: v(1), b: v(2) })
+    onChange.mockClear()
+
+    api.clearFilters()
+    expect(onChange).not.toHaveBeenCalled() // 内容没变,键序不同不该被当成「变了」
+    expect(api.state.value).toEqual({ a: v(1), b: v(2) })
+  })
+
   it('列定义后追加的过滤列补种一次 defaultValue,用户清掉后不回填', async () => {
     const { columns, api } = build([{ key: 'name', filter: true }])
     columns.value = [...columns.value, { key: 'status', filter: { defaultValue: v(1) } }]

@@ -63,18 +63,59 @@ describe('matchCondition', () => {
     expect(matchCondition(cond('gt', '2024-03-04'), cell)).toBe(true)
   })
 
-  it('纯日期过滤在西半球时区(UTC-11)运行时结果不变 —— 整天边界按 UTC 锚定,不随本地时区漂移', () => {
+  it('整天边界按本地时区锚定,与 formatDate/formatDatetime 的展示基准一致 —— 不按 UTC 零点切', () => {
+    // 单元格是不带时区偏移的裸 datetime 串(后端直出的常见形状):Date.parse 按运行环境
+    // 本地时区解析,「等于该单元格本地日历日」这条不变式在任意时区下都应成立 —— 这才是
+    // 用户在表格里实际看到的那一行(formatDatetime 同样用本地时间渲染)。
     const originalTZ = process.env.TZ
     try {
-      process.env.TZ = 'Etc/GMT+11'
-      const cell = '2024-03-05T08:30:00.000Z'
-      expect(matchCondition(cond('equal', '2024-03-05'), cell)).toBe(true)
-      expect(matchCondition(cond('equal', '2024-03-06'), cell)).toBe(false)
-      expect(matchCondition(cond('gte', '2024-03-05'), cell)).toBe(true)
-      expect(matchCondition(cond('lt', '2024-03-05'), cell)).toBe(false)
+      for (const tz of ['Asia/Shanghai', 'Etc/GMT+11', 'Pacific/Kiritimati']) {
+        process.env.TZ = tz
+        const cell = '2024-03-05T02:00:00'
+        expect(matchCondition(cond('equal', '2024-03-05'), cell)).toBe(true)
+        expect(matchCondition(cond('equal', '2024-03-06'), cell)).toBe(false)
+        expect(matchCondition(cond('gte', '2024-03-05'), cell)).toBe(true)
+        expect(matchCondition(cond('lt', '2024-03-05'), cell)).toBe(false)
+      }
     } finally {
       process.env.TZ = originalTZ
     }
+  })
+
+  it('过滤值按 UTC 锚定、单元格按本地解析的旧实现会漂移的场景:东半球时区下,裸 datetime 串接近午夜也要按本地日历日匹配', () => {
+    // 复现:TZ=Asia/Shanghai(UTC+8)时,'2024-03-05T02:00:00' 本地是 3 月 5 日凌晨,
+    // 但当年若按「过滤值锚 UTC 零点、单元格用 Date.parse 的本地时间」两套基准比较,
+    // 换算成 UTC 是 3 月 4 日 18:00,落在 UTC 的 3 月 5 日区间之外,会被误判成不匹配。
+    const originalTZ = process.env.TZ
+    try {
+      process.env.TZ = 'Asia/Shanghai'
+      const cell = '2024-03-05T02:00:00'
+      expect(matchCondition(cond('equal', '2024-03-05'), cell)).toBe(true)
+    } finally {
+      process.env.TZ = originalTZ
+    }
+  })
+
+  it('dateValueFormat 改成 yyyy/MM/dd 后,过滤值按同一种形状解析,整天语义不失效', () => {
+    const originalTZ = process.env.TZ
+    try {
+      // 固定时区:cellTs(08:30 UTC)在极端时区(如西 9 区以西)会跨到本地日历的前一天,
+      // 与本用例要验证的「格式解析」是两回事,这里用 Asia/Shanghai 避免那种跨天噪音。
+      process.env.TZ = 'Asia/Shanghai'
+      const cell = '2024-03-05T08:30:00.000Z'
+      expect(matchCondition(cond('equal', '2024/03/05'), cell, 'yyyy/MM/dd')).toBe(true)
+      expect(matchCondition(cond('equal', '2024/03/06'), cell, 'yyyy/MM/dd')).toBe(false)
+      expect(matchCondition(cond('gte', '2024/03/05'), cell, 'yyyy/MM/dd')).toBe(true)
+      // 不传 dateValueFormat 时按缺省 'yyyy-MM-dd' 解析,yyyy/MM/dd 形状的值解析不出来,
+      // 退回标量比较(旧行为,不会比不做这个功能更差)
+      expect(matchCondition(cond('equal', '2024/03/05'), cell)).toBe(false)
+    } finally {
+      process.env.TZ = originalTZ
+    }
+  })
+
+  it('无法按 dateValueFormat 解析出 yyyy/MM/dd 三个 token 时,dayRange 放弃,退回标量比较', () => {
+    expect(matchCondition(cond('equal', '2024-03-05'), '2024-03-05T08:30:00.000Z', 'yy-MM-dd')).toBe(false)
   })
 
   it('未识别的 action 视为不匹配,而不是放行全部行', () => {

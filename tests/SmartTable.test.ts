@@ -4,8 +4,30 @@ import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import { NDataTable } from 'naive-ui'
 import SmartTable from '../src/SmartTable.vue'
+import ColumnSettings from '../src/ColumnSettings.vue'
 import { FILLER_COLUMN_KEY } from '../src/useColumns'
 import type { SmartTableColumn } from '../src/types'
+
+// sortablejs 是懒加载的运行时依赖;这里换成假的,只观察「有没有绑、绑到了哪个 tbody」
+// (同 tests/useRowDrag.test.ts)。
+const sortableCreated: { el: unknown; destroyed: boolean }[] = []
+vi.mock('sortablejs', () => ({
+  default: {
+    create: (el: unknown) => {
+      const inst = { el, destroyed: false, destroy: () => (inst.destroyed = true) }
+      sortableCreated.push(inst)
+      return inst
+    },
+  },
+}))
+
+/** 动态 import('sortablejs') 走的是微任务/宏任务,不是单个 nextTick 能等完的,多 flush 几轮。 */
+async function flushSortableLoad() {
+  for (let i = 0; i < 5; i++) {
+    await nextTick()
+    await Promise.resolve()
+  }
+}
 
 interface Row {
   id: number
@@ -45,6 +67,31 @@ describe('SmartTable 列宽拖拽事件透传', () => {
     // 宿主自己的处理函数依然要被调用到(功能没有被吞掉,只是不能靠 Vue 的数组合并)
     expect(hostCalls).toHaveLength(1)
     expect(hostCalls[0]).toEqual([120, 120, { key: 'name' }, expect.any(Function)])
+
+    wrapper.unmount()
+  })
+
+  it('拖拽手势松手发生在浏览器窗口之外(window 收不到 mouseup)时,window blur 兜底把宽度落账', () => {
+    const wrapper = mount(SmartTable, {
+      props: {
+        columns: [{ key: 'name', title: 'Name', resizable: true }],
+        data: rows,
+        rowKey: 'id',
+      },
+    })
+    const dataTable = wrapper.findComponent(NDataTable)
+    const resize = dataTable.props('onUnstableColumnResize') as (...a: unknown[]) => void
+
+    resize(260, 260, { key: 'name' }, (k: string) => (k === 'name' ? 200 : undefined))
+    // 不发 mouseup,直接模拟窗口失焦(拖出浏览器视口再松手,常见于把窗口开得不够宽的场景)
+    window.dispatchEvent(new Event('blur'))
+
+    const inst = wrapper.vm as unknown as { columnWidths: Record<string, number> }
+    expect(inst.columnWidths.name).toBe(260) // blur 已经把这次手势的宽度落账
+
+    // 手势已经结束,后续任何不相关的 mouseup 都不该再把宽度重新落一遍(resizingKey 已清空)
+    window.dispatchEvent(new MouseEvent('mouseup'))
+    expect(inst.columnWidths.name).toBe(260)
 
     wrapper.unmount()
   })
@@ -175,5 +222,113 @@ describe('SmartTable 列宽钉住后填满容器', () => {
 
     wrapper.unmount()
     vi.unstubAllGlobals()
+  })
+})
+describe('SmartTable 暴露的 filters / columnWidths 是只读快照', () => {
+  // wrapper.vm 拿到的是 defineExpose 里那份对象,顶层 ref 会被自动解包 ——
+  // inst.filters / inst.columnWidths 读到的就是 readonly() 包过的 FilterState / widths 本身。
+
+  it('直接改 filters 不会生效 —— 绕开 setFilter 会漏发 onChange(远程模式漏一次重查)', () => {
+    const wrapper = mount(SmartTable, {
+      props: { columns: [{ key: 'name', title: 'Name', filter: true }], data: rows, rowKey: 'id' },
+    })
+    const inst = wrapper.vm as unknown as {
+      filters: Record<string, unknown>
+      setFilter: (key: string, value: unknown) => void
+    }
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    ;(inst.filters as Record<string, unknown>).name = { logic: 'and', conditions: [{ action: 'equal', value: 'x' }] }
+    expect(inst.filters).toEqual({}) // 直接改被 readonly 挡下,内部过滤态没变
+
+    inst.setFilter('name', { logic: 'and', conditions: [{ action: 'equal', value: 'alice' }] })
+    expect(inst.filters.name).toBeTruthy() // 走正规入口(setFilter)才真正生效
+
+    warn.mockRestore()
+    wrapper.unmount()
+  })
+
+  it('直接改 columnWidths 不会生效 —— 绕开 setWidth 会漏掉 localStorage 持久化', () => {
+    const wrapper = mount(SmartTable, {
+      props: { columns: [{ key: 'name', title: 'Name', resizable: true }], data: rows, rowKey: 'id' },
+    })
+    const inst = wrapper.vm as unknown as { columnWidths: Record<string, number> }
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    ;(inst.columnWidths as Record<string, number>).name = 999
+    expect(inst.columnWidths).toEqual({})
+
+    warn.mockRestore()
+    wrapper.unmount()
+  })
+})
+describe('SmartTable「恢复默认」强制重挂表格时,本地分页不该跳回第 1 页', () => {
+  it('翻到第 3 页后拖了列宽再点恢复默认,重挂后的分页仍从第 3 页起始', async () => {
+    const manyRows = Array.from({ length: 25 }, (_, i) => ({ id: i + 1, name: `row${i + 1}` }))
+    const wrapper = mount(SmartTable, {
+      props: {
+        columns: [{ key: 'name', title: 'Name', resizable: true }],
+        data: manyRows,
+        rowKey: 'id',
+        pagination: { pageSize: 10 },
+      },
+    })
+
+    // 先拖一次列宽(hadWidths 为 true,onResetSettings 才会触发重挂)
+    let dataTable = wrapper.findComponent(NDataTable)
+    const resize = dataTable.props('onUnstableColumnResize') as (...a: unknown[]) => void
+    resize(220, 220, { key: 'name' }, (k: string) => (k === 'name' ? 200 : undefined))
+    window.dispatchEvent(new MouseEvent('mouseup'))
+    await nextTick()
+
+    // 模拟用户翻到第 3 页(本地分页非受控,靠 onUpdatePage 通知我们)
+    dataTable = wrapper.findComponent(NDataTable)
+    const pagination = dataTable.props('pagination') as { onUpdatePage: (p: number) => void }
+    pagination.onUpdatePage(3)
+    await nextTick()
+
+    // 点「恢复默认」:内部会因为 hadWidths 为 true 而 tableKey++ 强制重挂 <n-data-table>
+    wrapper.findComponent(ColumnSettings).vm.$emit('reset')
+    await nextTick()
+
+    dataTable = wrapper.findComponent(NDataTable)
+    const paginationAfter = dataTable.props('pagination') as { defaultPage?: number }
+    expect(paginationAfter.defaultPage).toBe(3) // 重挂后的新实例仍从第 3 页起始,不掉回第 1 页
+
+    wrapper.unmount()
+  })
+})
+describe('SmartTable「恢复默认」强制重挂表格时,行拖拽要重新绑定', () => {
+  it('tableKey 重挂后 sortable 实例要挂到新的 tbody 上,而不是继续挂着已经卸载的旧 tbody', async () => {
+    sortableCreated.length = 0
+    const wrapper = mount(SmartTable, {
+      props: {
+        columns: [{ key: 'name', title: 'Name', resizable: true }],
+        data: [...rows],
+        rowKey: 'id',
+        rowDraggable: true,
+      },
+      attachTo: document.body,
+    })
+    await flushSortableLoad()
+    expect(sortableCreated).toHaveLength(1)
+    const firstTbody = sortableCreated[0].el
+
+    // 拖一次列宽(hadWidths 为 true),再点「恢复默认」触发 tableKey++ 强制重挂
+    let dataTable = wrapper.findComponent(NDataTable)
+    const resize = dataTable.props('onUnstableColumnResize') as (...a: unknown[]) => void
+    resize(220, 220, { key: 'name' }, (k: string) => (k === 'name' ? 200 : undefined))
+    window.dispatchEvent(new MouseEvent('mouseup'))
+    await flushSortableLoad()
+
+    wrapper.findComponent(ColumnSettings).vm.$emit('reset')
+    await flushSortableLoad()
+
+    expect(sortableCreated.length).toBeGreaterThanOrEqual(2) // 重挂后补绑了新的一份
+    const latest = sortableCreated[sortableCreated.length - 1]
+    expect(latest.el).not.toBe(firstTbody) // 绑到的是新 tbody,不是已经卸载的旧的
+    expect(latest.destroyed).toBe(false)
+
+    wrapper.unmount()
   })
 })

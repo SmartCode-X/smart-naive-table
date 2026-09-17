@@ -77,10 +77,15 @@ function flatten(opts: SmartTableOption[]): SmartTableOption[] {
   return opts.flatMap((o) => (o.children?.length ? flatten(o.children) : [o]))
 }
 const flatOptions = computed(() => flatten(props.getOptions(props.def.optionsKey)))
+// disabled 选项的勾选框用户碰不到(界面上就是禁用的),「全选/全不选」不该替它们做主 ——
+// 只对用户实际能操作的选项生效,disabled 选项当前是勾是不勾,toggleAll 前后保持不变。
+const selectableOptions = computed(() => flatOptions.value.filter((o) => !o.disabled))
 const allChecked = computed(
-  () => flatOptions.value.length > 0 && checked.value.length === flatOptions.value.length,
+  () => selectableOptions.value.length > 0 && selectableOptions.value.every((o) => checked.value.includes(o.value)),
 )
-const someChecked = computed(() => checked.value.length > 0 && !allChecked.value)
+const someChecked = computed(
+  () => selectableOptions.value.some((o) => checked.value.includes(o.value)) && !allChecked.value,
+)
 
 function toggleOption(value: unknown, on: boolean) {
   if (!props.def.multiple) {
@@ -91,7 +96,8 @@ function toggleOption(value: unknown, on: boolean) {
 }
 
 function toggleAll(on: boolean) {
-  checked.value = on ? flatOptions.value.map((o) => o.value) : []
+  const disabledChecked = checked.value.filter((v) => flatOptions.value.find((o) => o.value === v)?.disabled)
+  checked.value = on ? [...disabledChecked, ...selectableOptions.value.map((o) => o.value)] : disabledChecked
 }
 
 /* ---- 条件行(condition 模式) ---- */

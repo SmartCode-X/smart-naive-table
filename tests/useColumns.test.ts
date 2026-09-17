@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { h, type Slots, type VNode } from 'vue'
+import { h, ref, type Slots, type VNode } from 'vue'
 import type { DataTableBaseColumn, DataTableColumn } from 'naive-ui'
 import {
   deriveFilterDefs,
@@ -163,6 +163,15 @@ describe('useColumns 表头过滤入口', () => {
     const api = build([{ key: 'name', title: 'N', filter: true }])
     expect(col(api, 'name').title).toBe('N')
   })
+
+  it('本包的 filter 配置(FilterConfig)不透传给 n-data-table —— 撞的是它自己保留的同名字段', () => {
+    const api = build([
+      { key: 'name', title: 'N', filter: true },
+      { key: 'amt', title: 'A', filter: { multiple: false } },
+    ])
+    expect(col(api, 'name').filter).toBeUndefined()
+    expect(col(api, 'amt').filter).toBeUndefined()
+  })
 })
 
 describe('useColumns 列宽拖拽', () => {
@@ -311,6 +320,36 @@ describe('useColumns 列宽拖拽', () => {
     api.setWidth('name', 260)
     expect(setItem).not.toHaveBeenCalled()
     vi.unstubAllGlobals()
+  })
+
+  it('列被移除后,widths 里对应的旧宽度也跟着清掉,不会被新声明的同名列悄悄继承', () => {
+    const columns = ref<SmartTableColumn<Row>[]>([
+      { key: 'name', title: 'N', width: 100 },
+      { key: 'amt', title: 'A', width: 100 },
+    ])
+    const api = useColumns<Row>({
+      columns: () => columns.value,
+      defaultDensity: 'comfortable',
+      getOptions: () => [],
+      slots: {},
+      indexOffset: () => 0,
+      defaults: resolveDefaults(),
+      filterDefs: () => deriveFilterDefs<Row>(columns.value),
+    })
+    api.setWidth('name', 260)
+    api.setWidth('amt', 240)
+    expect(api.widths.value).toEqual({ name: 260, amt: 240 })
+
+    columns.value = [{ key: 'name', title: 'N', width: 100 }] // amt 不再声明
+    expect(api.widths.value).toEqual({ name: 260 }) // amt 的陈旧宽度被清掉,name 保留
+
+    // 之后来了个同名(amt)的新列,不该莫名其妙继承一份自己从没拖过的宽度
+    columns.value = [
+      { key: 'name', title: 'N', width: 100 },
+      { key: 'amt', title: 'A', width: 100 },
+    ]
+    expect(api.widths.value).toEqual({ name: 260 })
+    expect(col(api, 'amt').width).toBe(100) // 走的是列自己声明的 width,不是残留的 240
   })
 })
 describe('withFillerColumn:列宽钉住后用占位列填满容器', () => {

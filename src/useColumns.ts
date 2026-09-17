@@ -1,4 +1,4 @@
-import { computed, h, ref, type ComputedRef, type Ref, type Slots, type VNodeChild } from 'vue'
+import { computed, h, ref, watch, type ComputedRef, type Ref, type Slots, type VNodeChild } from 'vue'
 import { NTag } from 'naive-ui'
 import type { DataTableBaseColumn, DataTableColumn } from 'naive-ui'
 import type {
@@ -379,6 +379,36 @@ export function useColumns<T>(opts: UseColumnsOpts<T>): UseColumnsReturn<T> {
     if (opts.storageKey) clearState(opts.storageKey)
   }
 
+  /**
+   * 列被移除(不再声明)后,widths 里那份旧宽度要跟着清掉 —— 不然要是之后一个新列复用了
+   * 同一个 key,会莫名其妙地继承一份自己从没拖过的宽度;effectiveChecks/mergeCols 对
+   * 列设置(checks)本身已经做了这层过滤,widths 之前一直没有对应的清理入口。
+   * immediate:mount 时也顺手清一遍上一次会话留下的、对应列已经不在了的陈旧宽度。
+   */
+  watch(
+    () => opts.columns(),
+    () => {
+      const validKeys = new Set<string>(specialCols.value.map(specialColumnKey))
+      const walk = (cols: SmartTableDataColumn<T>[]) => {
+        for (const col of cols) {
+          if (col.children?.length) walk(col.children)
+          else validKeys.add(col.key)
+        }
+      }
+      walk(dataCols.value)
+
+      const staleKeys = Object.keys(widths.value).filter((k) => !validKeys.has(k))
+      if (staleKeys.length === 0) return
+      const next = { ...widths.value }
+      staleKeys.forEach((k) => delete next[k])
+      widths.value = next
+      if (opts.storageKey) saveState(opts.storageKey, density.value, effectiveChecks.value, next)
+    },
+    // sync:同步清理,不等下一轮 flush —— 否则列刚被移除的这一帧,naiveColumns/scrollX
+    // 还能读到那份陈旧宽度,可能闪一下不该出现的列宽再恢复。
+    { immediate: true, flush: 'sync' },
+  )
+
   const settingItems = computed<SettingItem[]>(() => {
     const titleByKey = new Map(managedCols.value.map((c) => [c.key, c.title]))
     return effectiveChecks.value.map((c) => ({ ...c, title: titleByKey.get(c.key) }))
@@ -398,6 +428,10 @@ export function useColumns<T>(opts: UseColumnsOpts<T>): UseColumnsReturn<T> {
       hideInTable: _hideInTable,
       hideInSetting: _hideInSetting,
       search: _search,
+      // 本包接管的表头过滤配置(FilterConfig),类型上已 Omit<..., 'filter'> 不继承 Naive
+      // 同名属性 —— 这里必须同样从 rest 里摘掉,否则会原样透传给 n-data-table,撞上它自己
+      // 内部的 filter/filterOptions/uncontrolledFilterStateRef 机制。
+      filter: _filter,
       children,
       ...naiveRest
     } = col
